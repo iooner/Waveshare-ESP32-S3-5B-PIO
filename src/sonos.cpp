@@ -1,6 +1,7 @@
 #include "sonos.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <esp32s3/rom/tjpgd.h>
 
 #define SONOS_PORT       1400
 #define MAX_SPEAKERS     8
@@ -20,6 +21,17 @@ static uint8_t active = 0;  // enceinte interrogée en premier : la dernière qu
 static SonosTrack current = {};
 static SemaphoreHandle_t lock;
 static char resp[4096];  // réponse HTTP en cours ; GetPositionInfo fait ~1,5 Ko
+
+// Pochette : deux images en PSRAM, celle qui est publiée et celle en cours de décodage
+#define ART_PX        (SONOS_ART_SIZE * SONOS_ART_SIZE)
+#define ART_JPEG_MAX  (96 * 1024)  // une pochette de 300 x 300 pèse ~30 Ko
+#define ART_POOL      4096         // mémoire de travail du décodeur JPEG
+static uint16_t *art_buf[2];
+static uint8_t *art_jpeg, *art_pool;
+static const uint16_t *art = nullptr;
+static uint32_t art_version = 0;
+static uint8_t art_next = 0;
+static char art_url[160], art_shown[160];
 
 // --- Texte ---
 
@@ -225,6 +237,10 @@ static bool readSpeaker(const Speaker &sp, SonosTrack &t) {
   if (!between(resp, "&lt;dc:title&gt;", "&lt;/dc:title&gt;", t.title, sizeof(t.title))) return false;
   between(resp, "&lt;dc:creator&gt;", "&lt;/dc:creator&gt;", t.artist, sizeof(t.artist));
   between(resp, "&lt;upnp:album&gt;", "&lt;/upnp:album&gt;", t.album, sizeof(t.album));
+  art_url[0] = 0;
+  between(resp, "&lt;upnp:albumArtURI&gt;", "&lt;/upnp:albumArtURI&gt;", art_url, sizeof(art_url));
+  unescape(art_url);
+  unescape(art_url);
   for (char *s : {t.title, t.artist, t.album}) {
     unescape(s);
     unescape(s);
@@ -236,6 +252,87 @@ static bool readSpeaker(const Speaker &sp, SonosTrack &t) {
   t.state = state;
   strlcpy(t.room, sp.room, sizeof(t.room));
   return true;
+}
+
+// --- Pochette ---
+
+struct ArtIo {
+  const uint8_t *data;
+  size_t len, pos;
+  uint16_t *out;
+};
+
+static UINT artRead(JDEC *jd, BYTE *buf, UINT n) {
+  ArtIo *io = (ArtIo *)jd->device;
+  n = min((size_t)n, io->len - io->pos);
+  if (buf) memcpy(buf, io->data + io->pos, n);
+  io->pos += n;
+  return n;
+}
+
+// Reçoit un bloc décodé en RGB888 et le range en RGB565, coupé à la taille de la pochette
+static UINT artWrite(JDEC *jd, void *bitmap, JRECT *r) {
+  ArtIo *io = (ArtIo *)jd->device;
+  const uint8_t *px = (const uint8_t *)bitmap;
+  for (int y = r->top; y <= r->bottom; y++) {
+    for (int x = r->left; x <= r->right; x++, px += 3) {
+      if (x < SONOS_ART_SIZE && y < SONOS_ART_SIZE) {
+        io->out[y * SONOS_ART_SIZE + x] = (px[0] & 0xF8) << 8 | (px[1] & 0xFC) << 3 | px[2] >> 3;
+      }
+    }
+  }
+  return 1;
+}
+
+// Télécharge et décode la pochette dans l'image de réserve. Spotify sert ses pochettes en HTTP
+// simple, et en 300 x 300 quand on change le préfixe de leur identifiant.
+static bool fetchArt(const char *url) {
+  static const char BASE[] = "https://i.scdn.co/image/", BIG[] = "ab67616d0000b273", SMALL[] = "ab67616d00001e02";
+  if (strncmp(url, BASE, sizeof(BASE) - 1) != 0 || !art_jpeg) return false;
+  char id[80];
+  strlcpy(id, url + sizeof(BASE) - 1, sizeof(id));
+  if (strncmp(id, BIG, sizeof(BIG) - 1) == 0) memcpy(id, SMALL, sizeof(SMALL) - 1);
+
+  WiFiClient c;
+  if (!c.connect("i.scdn.co", 80, 3000)) return false;
+  c.printf("GET /image/%s HTTP/1.1\r\nHost: i.scdn.co\r\nConnection: close\r\n\r\n", id);
+  size_t n = 0;
+  uint32_t t0 = millis();
+  while (n < ART_JPEG_MAX && millis() - t0 < 5000 && (c.connected() || c.available())) {
+    int got = c.read(art_jpeg + n, ART_JPEG_MAX - n);
+    if (got > 0) n += got;
+    else delay(2);
+  }
+  c.stop();
+
+  // Le JPEG commence après la ligne vide qui termine les en-têtes
+  const uint8_t *body = (const uint8_t *)memmem(art_jpeg, n, "\r\n\r\n", 4);
+  if (!body || memcmp(art_jpeg + 9, "200", 3) != 0) return false;
+  body += 4;
+
+  uint16_t *out = art_buf[art_next];
+  memset(out, 0, ART_PX * sizeof(uint16_t));
+  ArtIo io = {body, n - (size_t)(body - art_jpeg), 0, out};
+  JDEC jd;
+  if (jd_prepare(&jd, artRead, art_pool, ART_POOL, &io) != JDR_OK) return false;
+  // Décodeur de la ROM : réductions de 1/2, 1/4, 1/8 seulement
+  uint8_t scale = 0;
+  while (scale < 3 && (jd.width >> scale) > SONOS_ART_SIZE) scale++;
+  return jd_decomp(&jd, artWrite, scale) == JDR_OK;
+}
+
+// Met la pochette à jour quand le morceau en change. L'ancienne reste publiée pendant le chargement.
+static void updateArt(bool playing) {
+  if (!playing) art_url[0] = 0;
+  if (strcmp(art_url, art_shown) == 0) return;
+  strlcpy(art_shown, art_url, sizeof(art_shown));
+  bool ok = art_url[0] && fetchArt(art_url);
+  if (art_url[0]) Serial.printf("Sonos : pochette %s\n", ok ? "chargée" : "indisponible");
+  xSemaphoreTake(lock, portMAX_DELAY);
+  art = ok ? art_buf[art_next] : nullptr;
+  art_version++;
+  xSemaphoreGive(lock);
+  if (ok) art_next ^= 1;
 }
 
 static void sonosTask(void *) {
@@ -263,6 +360,14 @@ static void sonosTask(void *) {
       if (track.state == SONOS_NONE) track = t;  // première enceinte en pause
     }
 
+    // Une lecture manquée (réseau, changement de morceau) ne doit pas faire basculer l'affichage
+    static uint8_t misses = 0;
+    if (track.state != SONOS_PLAYING && current.state == SONOS_PLAYING && ++misses < 2) {
+      delay(POLL_MS);
+      continue;
+    }
+    misses = 0;
+
     if (track.state != current.state || strcmp(track.title, current.title) != 0) {
       if (track.state == SONOS_NONE) Serial.println("Sonos : rien en lecture");
       else Serial.printf("Sonos : %s%s, %s - %s\n", track.room, track.state == SONOS_PAUSED ? " (pause)" : "", track.artist, track.title);
@@ -270,12 +375,17 @@ static void sonosTask(void *) {
     xSemaphoreTake(lock, portMAX_DELAY);
     current = track;
     xSemaphoreGive(lock);
+    updateArt(track.state == SONOS_PLAYING);
     delay(track.state == SONOS_PLAYING ? POLL_MS : IDLE_POLL_MS);
   }
 }
 
 void sonosBegin() {
   lock = xSemaphoreCreateMutex();
+  for (uint16_t *&b : art_buf) b = (uint16_t *)heap_caps_malloc(ART_PX * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+  art_jpeg = (uint8_t *)heap_caps_malloc(ART_JPEG_MAX, MALLOC_CAP_SPIRAM);
+  art_pool = (uint8_t *)heap_caps_malloc(ART_POOL, MALLOC_CAP_SPIRAM);
+  if (!art_buf[0] || !art_buf[1] || !art_pool) art_jpeg = nullptr;  // pas de pochette
   xTaskCreatePinnedToCore(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0);
 }
 
@@ -283,4 +393,12 @@ void sonosGet(SonosTrack &out) {
   xSemaphoreTake(lock, portMAX_DELAY);
   out = current;
   xSemaphoreGive(lock);
+}
+
+const uint16_t *sonosArt(uint32_t &version) {
+  xSemaphoreTake(lock, portMAX_DELAY);
+  const uint16_t *a = art;
+  version = art_version;
+  xSemaphoreGive(lock);
+  return a;
 }

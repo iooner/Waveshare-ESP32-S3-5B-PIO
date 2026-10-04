@@ -46,19 +46,28 @@ static uint8_t dirty_count = 0;
 // Chaque ligne affichée est donc décrite ici, en RAM interne : une couleur de fond, et entre x0
 // et x1 son contenu, gardé sous forme compacte (16 couleurs au plus, 4 bits par pixel) quand
 // c'est possible. Sinon cette partie est lue en PSRAM, comme une image.
-#define ROW_SLOTS      224   // lignes compactes disponibles (544 octets chacune)
-#define NO_SLOT        0xFFFF
+#define CELL_PX        64    // une ligne est découpée en cases de 64 pixels ; seules les cases non unies sont gardées
+#define ROW_CELLS      (LCD_WIDTH / CELL_PX)
+#define CELL_COUNT     2800  // cases disponibles (32 octets chacune)
+#define HEAD_COUNT     360   // lignes compactes disponibles (64 octets d'en-tête chacune)
+#define NONE           0xFFFF
 #define RAW_NARROW_PX  128   // contenu assez étroit pour être lu en PSRAM sans risque
 
 struct RowInfo {
-  uint16_t bg;      // couleur de la ligne en dehors de [x0, x1)
-  uint16_t x0, x1;  // pairs ; x0 == x1 : ligne unie
-  uint16_t slot;    // ligne compacte, ou NO_SLOT si [x0, x1) est lu dans le framebuffer
+  uint16_t bg;        // couleur de fond de la ligne
+  uint16_t head;      // en-tête de ligne compacte, ou NONE
+  uint16_t mask;      // cases non unies d'une ligne compacte
+  uint16_t x0, x1;    // sans en-tête : partie lue dans le framebuffer (x0 == x1 : ligne unie)
+  uint16_t ix0, ix1;  // partie occupée par l'image déclarée, lue dans le framebuffer
 };
 
-struct PackedRow {
+struct RowHead {
   uint16_t palette[16];
-  uint8_t px[LCD_WIDTH / 2];  // deux pixels par octet, à partir de x0
+  uint16_t cell[ROW_CELLS];  // case de chaque tranche de 64 pixels marquée dans le masque
+};
+
+struct Cell {
+  uint8_t px[CELL_PX / 2];  // deux pixels par octet
 };
 
 struct RowUpdate {
@@ -66,12 +75,16 @@ struct RowUpdate {
   RowInfo info;
 };
 
-static RowInfo rows[LCD_HEIGHT];           // décrit le framebuffer affiché ; modifié seulement entre deux images
-static PackedRow *pool;
-static uint16_t free_slots[ROW_SLOTS], free_count;
-static RowUpdate staged[LCD_HEIGHT];       // lignes de la prochaine image, appliquées à l'échange
+static RowInfo rows[LCD_HEIGHT];      // décrit le framebuffer affiché ; modifié seulement entre deux images
+static RowHead *heads;
+static Cell *cells;
+static uint16_t free_heads[HEAD_COUNT], free_head_count;
+static uint16_t free_cells[CELL_COUNT], free_cell_count;
+static RowUpdate staged[LCD_HEIGHT];  // lignes de la prochaine image, appliquées à l'échange
 static volatile uint16_t staged_count = 0;
 static portMUX_TYPE swap_mux = portMUX_INITIALIZER_UNLOCKED;
+static int16_t img_x0, img_x1, img_y0, img_y1;  // zone d'image déclarée par lcdImageArea()
+static uint32_t deferred[(LCD_HEIGHT + 31) / 32];  // lignes à redécrire quand des cases se libèrent
 
 static LcdStats stats;
 static portMUX_TYPE stats_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -86,58 +99,86 @@ static inline __attribute__((always_inline)) void fillPairs(uint16_t *dst, uint1
   for (n >>= 1; n; n--) *d++ = c32;
 }
 
-// Développe n pixels d'une ligne compacte (n pair, dst aligné sur 4 octets)
-static inline __attribute__((always_inline)) void unpack(uint16_t *dst, const PackedRow &row, uint32_t n) {
-  const uint8_t *src = row.px;
-  const uint16_t *pal = row.palette;
+// Développe une case de 64 pixels (dst aligné sur 4 octets)
+static inline __attribute__((always_inline)) void unpack(uint16_t *dst, const Cell &cell, const uint16_t *pal) {
+  const uint8_t *src = cell.px;
   uint32_t *d = (uint32_t *)dst;
-  for (n >>= 1; n; n--) {
+  for (uint32_t n = CELL_PX / 2; n; n--) {
     uint8_t b = *src++;
     *d++ = pal[b >> 4] | (uint32_t)pal[b & 15] << 16;
   }
 }
 
-// Décrit une ligne du framebuffer de dessin. Prend une ligne compacte dans la réserve si le
-// contenu est large, tient en 16 couleurs, et qu'il en reste une.
-static void describeRow(const uint16_t *src, RowInfo &r) {
-  uint16_t bg = src[0];
-  int x0 = 0, x1 = LCD_WIDTH;
-  while (x0 < LCD_WIDTH && src[x0] == bg) x0++;
-  r.bg = bg;
-  r.slot = NO_SLOT;
-  if (x0 == LCD_WIDTH) {
-    r.x0 = r.x1 = 0;
-    return;
+static void releaseRow(const RowInfo &r) {
+  if (r.head == NONE) return;
+  for (uint8_t c = 0; c < ROW_CELLS; c++) {
+    if (r.mask >> c & 1) free_cells[free_cell_count++] = heads[r.head].cell[c];
   }
-  while (src[x1 - 1] == bg) x1--;
-  r.x0 = x0 &= ~1;
-  r.x1 = x1 = (x1 + 1) & ~1;
-  if (x1 - x0 <= RAW_NARROW_PX || free_count == 0) return;
+  free_heads[free_head_count++] = r.head;
+}
 
-  PackedRow &p = pool[free_slots[free_count - 1]];
-  p.palette[0] = bg;
+// Décrit une ligne du framebuffer de dessin. Faux si la réserve est vide alors que la ligne
+// tiendrait en 16 couleurs : mieux vaut alors garder l'ancienne description et réessayer.
+static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
+  // Les pixels de l'image déclarée sont lus à part : ici ils comptent comme du fond
+  int ix0 = 0, ix1 = 0;
+  if (y >= img_y0 && y < img_y1) ix0 = img_x0, ix1 = img_x1;
+  auto image = [&](int x) { return x >= ix0 && x < ix1; };
+
+  uint16_t bg = src[ix0 == 0 && ix1 < LCD_WIDTH ? ix1 : 0];
+  int x0 = 0, x1 = LCD_WIDTH;
+  while (x0 < LCD_WIDTH && (image(x0) || src[x0] == bg)) x0++;
+  r = {bg, NONE, 0, 0, 0, (uint16_t)ix0, (uint16_t)ix1};
+  if (x0 == LCD_WIDTH) return true;
+  while (image(x1 - 1) || src[x1 - 1] == bg) x1--;
+  r.x0 = x0 & ~1;
+  r.x1 = (x1 + 1) & ~1;
+  if (r.x1 - r.x0 <= RAW_NARROW_PX) return true;
+  if (free_head_count == 0) return false;
+
+  RowInfo packed = r;
+  packed.head = free_heads[--free_head_count];
+  RowHead &h = heads[packed.head];
+  h.palette[0] = bg;
   uint8_t colors = 1, last_index = 0;
   uint16_t last = bg;
-  uint8_t *dst = p.px;
-  for (int x = x0; x < x1; x += 2) {
-    uint8_t pair = 0;
-    for (int k = 0; k < 2; k++) {
-      uint16_t c = src[x + k];
-      if (c != last) {
+  bool full = false, many = false;
+  for (int c = x0 / CELL_PX; c <= (x1 - 1) / CELL_PX && !full && !many; c++) {
+    uint8_t px[CELL_PX / 2];
+    bool used = false;
+    for (int k = 0; k < CELL_PX && !many; k++) {
+      int x = c * CELL_PX + k;
+      uint16_t col = image(x) ? bg : src[x];
+      if (col != last) {
         uint8_t i = 0;
-        while (i < colors && p.palette[i] != c) i++;
+        while (i < colors && h.palette[i] != col) i++;
         if (i == colors) {
-          if (colors == 16) return;  // trop de couleurs : la ligne sera lue en PSRAM
-          p.palette[colors++] = c;
+          if (colors == 16) many = true;
+          else h.palette[colors++] = col;
         }
-        last = c;
+        last = col;
         last_index = i;
       }
-      pair = pair << 4 | last_index;
+      used |= last_index != 0;
+      if (k & 1) px[k / 2] |= last_index;
+      else px[k / 2] = last_index << 4;
     }
-    *dst++ = pair;
+    if (!used || many) continue;
+    if (free_cell_count == 0) {
+      full = true;
+      break;
+    }
+    h.cell[c] = free_cells[--free_cell_count];
+    memcpy(cells[h.cell[c]].px, px, sizeof(px));
+    packed.mask |= 1 << c;
   }
-  r.slot = free_slots[--free_count];
+  if (full || many) {
+    releaseRow(packed);
+    return many;  // trop de couleurs : la ligne sera lue en PSRAM ; réserve vide : à réessayer
+  }
+  packed.x0 = packed.x1 = 0;
+  r = packed;
+  return true;
 }
 
 // Le pilote appelle cette fonction quand un tampon vient de partir à l'écran, pour le remplir
@@ -165,9 +206,15 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
     const RowInfo &r = rows[y];
     fillPairs(out, r.bg, r.x0);
     fillPairs(out + r.x1, r.bg, LCD_WIDTH - r.x1);
-    if (r.x0 == r.x1) continue;
-    if (r.slot != NO_SLOT) unpack(out + r.x0, pool[r.slot], r.x1 - r.x0);
-    else memcpy(out + r.x0, fb + y * LCD_WIDTH + r.x0, (r.x1 - r.x0) * sizeof(uint16_t));
+    if (r.head != NONE) {
+      const RowHead &h = heads[r.head];
+      for (uint32_t c = 0, m = r.mask; m; c++, m >>= 1) {
+        if (m & 1) unpack(out + c * CELL_PX, cells[h.cell[c]], h.palette);
+      }
+    } else if (r.x0 != r.x1) {
+      memcpy(out + r.x0, fb + y * LCD_WIDTH + r.x0, (r.x1 - r.x0) * sizeof(uint16_t));
+    }
+    if (r.ix0 != r.ix1) memcpy(out + r.ix0, fb + y * LCD_WIDTH + r.ix0, (r.ix1 - r.ix0) * sizeof(uint16_t));
   }
 
   // Si le morceau suivant est surtout lu en PSRAM (une image), on le précharge dans le cache
@@ -176,7 +223,7 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
   const RowInfo *nr = &rows[next * LCD_BOUNCE_LINES];
   uint32_t raw_px = 0;
   for (uint32_t i = 0; i < LCD_BOUNCE_LINES; i++) {
-    if (nr[i].slot == NO_SLOT) raw_px += nr[i].x1 - nr[i].x0;
+    raw_px += nr[i].x1 - nr[i].x0;
   }
   if (raw_px > LCD_BOUNCE_PX / 2) {
     const uint16_t *next_fb = next ? fb : fbs[pending];
@@ -228,9 +275,9 @@ void lcdStats(LcdStats &out) {
   portEXIT_CRITICAL(&stats_mux);
   out.max_copy_us /= CPU_MHZ;
   for (const RowInfo &r : rows) {
-    if (r.slot == NO_SLOT && r.x1 - r.x0 > RAW_NARROW_PX) out.psram_rows++;
+    if (r.x1 - r.x0 > RAW_NARROW_PX) out.psram_rows++;
   }
-  out.free_slots = free_count;
+  out.free_slots = free_cell_count;
 }
 
 bool lcdBegin() {
@@ -244,10 +291,12 @@ bool lcdBegin() {
     if (!fbs[i]) return false;
   }
   // Framebuffers à zéro : toutes les lignes sont unies et noires
-  for (RowInfo &r : rows) r = {0, 0, 0, NO_SLOT};
-  pool = (PackedRow *)heap_caps_malloc(ROW_SLOTS * sizeof(PackedRow), MALLOC_CAP_INTERNAL);
-  if (!pool) return false;
-  for (free_count = 0; free_count < ROW_SLOTS; free_count++) free_slots[free_count] = free_count;
+  for (RowInfo &r : rows) r = {0, NONE, 0, 0, 0, 0, 0};
+  heads = (RowHead *)heap_caps_malloc(HEAD_COUNT * sizeof(RowHead), MALLOC_CAP_INTERNAL);
+  cells = (Cell *)heap_caps_malloc(CELL_COUNT * sizeof(Cell), MALLOC_CAP_INTERNAL);
+  if (!heads || !cells) return false;
+  for (free_head_count = 0; free_head_count < HEAD_COUNT; free_head_count++) free_heads[free_head_count] = free_head_count;
+  for (free_cell_count = 0; free_cell_count < CELL_COUNT; free_cell_count++) free_cells[free_cell_count] = free_cell_count;
 
   esp_lcd_rgb_panel_config_t cfg = {};
   cfg.clk_src = LCD_CLK_SRC_DEFAULT;
@@ -331,47 +380,61 @@ void lcdDirty(int16_t x, int16_t y, int16_t w, int16_t h) {
   dirty[best] = unite(dirty[best], n);
 }
 
+void lcdImageArea(int16_t x, int16_t y, int16_t w, int16_t h) {
+  // Une bande fine suffit à faire redécrire les lignes de l'ancienne et de la nouvelle zone
+  lcdDirty(img_x0, img_y0, 2, img_y1 - img_y0);
+  if (!lcdClip(x, y, w, h)) x = y = w = h = 0;
+  img_x0 = x & ~1, img_x1 = (x + w + 1) & ~1, img_y0 = y, img_y1 = y + h;
+  lcdDirty(img_x0, img_y0, 2, h);
+}
+
 void lcdPresent() {
   xSemaphoreTake(frame_sem, 0);
-  if (dirty_count == 0) {
+
+  // Lignes à décrire : celles qui viennent d'être modifiées, plus celles restées en attente
+  static uint32_t touched[(LCD_HEIGHT + 31) / 32];
+  static RowInfo old_rows[LCD_HEIGHT];
+  bool swap = dirty_count > 0, any = swap;
+  for (size_t i = 0; i < sizeof(touched) / sizeof(touched[0]); i++) any |= (touched[i] = deferred[i]) != 0;
+  if (!any) {
     xSemaphoreTake(frame_sem, pdMS_TO_TICKS(200));
     return;
   }
-
-  // Décrit les lignes modifiées, telles qu'elles sont dans le framebuffer de dessin
-  static uint32_t touched[(LCD_HEIGHT + 31) / 32];
-  static uint16_t old_slots[LCD_HEIGHT];
-  memset(touched, 0, sizeof(touched));
+  memset(deferred, 0, sizeof(deferred));
   for (uint8_t i = 0; i < dirty_count; i++) {
     for (int16_t y = dirty[i].y; y < dirty[i].y + dirty[i].h; y++) touched[y >> 5] |= 1u << (y & 31);
   }
+  // Telles qu'elles sont dans le framebuffer de dessin (identique à l'autre hors zones modifiées).
+  // Réserve vide : la ligne garde son ancienne image compacte et sera refaite à l'image suivante,
+  // quand les cases des lignes remplacées seront revenues.
   uint16_t n = 0;
   for (uint16_t y = 0; y < LCD_HEIGHT; y++) {
     if (!(touched[y >> 5] & 1u << (y & 31))) continue;
+    if (!describeRow(lcd_fb + y * LCD_WIDTH, y, staged[n].info)) {
+      deferred[y >> 5] |= 1u << (y & 31);
+      if (rows[y].head != NONE) continue;  // sinon elle est lue en PSRAM en attendant
+    }
     staged[n].y = y;
-    describeRow(lcd_fb + y * LCD_WIDTH, staged[n].info);
-    old_slots[n++] = rows[y].slot;
+    old_rows[n++] = rows[y];
   }
 
   // Le balayage passe sur le nouveau framebuffer et ses lignes à la fin de l'image en cours.
   // Les deux demandes partent ensemble : l'interruption ne doit pas voir l'une sans l'autre.
   portENTER_CRITICAL(&swap_mux);
-  pending = back;
+  if (swap) pending = back;
   staged_count = n;
   portEXIT_CRITICAL(&swap_mux);
-  bool swapped = true;
-  while (scan != back) {
+  bool done = true;
+  while (staged_count || scan != pending) {
     if (!xSemaphoreTake(frame_sem, pdMS_TO_TICKS(200))) {  // LCD arrêté : on ne reste pas bloqué
-      swapped = false;
+      done = false;
       staged_count = 0;
       break;
     }
   }
   // Les lignes compactes qui ne servent plus retournent dans la réserve
-  for (uint16_t i = 0; i < n; i++) {
-    uint16_t unused = swapped ? old_slots[i] : staged[i].info.slot;
-    if (unused != NO_SLOT) free_slots[free_count++] = unused;
-  }
+  for (uint16_t i = 0; i < n; i++) releaseRow(done ? old_rows[i] : staged[i].info);
+  if (!swap) return;
 
   // L'ancien framebuffer affiché devient celui de dessin : on y reporte ce qui vient d'être
   // dessiné dans l'autre, pour que les deux restent identiques.

@@ -21,3 +21,8 @@ void sonosBegin();
 
 // Dernier état connu : l'enceinte qui joue, à défaut une enceinte en pause
 void sonosGet(SonosTrack &out);
+
+// Pochette du morceau en cours : SONOS_ART_SIZE x SONOS_ART_SIZE pixels RGB565, ou nul s'il n'y
+// en a pas. `version` change chaque fois que la pochette change.
+#define SONOS_ART_SIZE  300
+const uint16_t *sonosArt(uint32_t &version);

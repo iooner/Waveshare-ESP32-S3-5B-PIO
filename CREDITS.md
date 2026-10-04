@@ -10,6 +10,7 @@ bibliothèque, de police, d'image ou de code repris.
 | [Arduino core pour ESP32](https://github.com/espressif/arduino-esp32) 3.3.12 | Espressif Systems | LGPL-2.1 | Framework : `Serial`, `Wire`, `WiFi`, `configTzTime()` |
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5.5 | Espressif Systems | Apache-2.0 | Pilote LCD RGB `esp_lcd`, `esp_timer`, SNTP, et les composants embarqués (FreeRTOS, lwIP...) |
 | [Open Sans](https://github.com/googlefonts/opensans) 3.003 | The Open Sans Project Authors, © 2020 | SIL Open Font License 1.1 ([texte](include/fonts/OFL.txt)) | Glyphes pré-rendus dans `include/fonts/*.h` |
+| [TJpgDec](http://elm-chan.org/fsw/tjpgd/) | ChaN | Licence libre de l'auteur (type BSD) | Décodeur JPEG présent dans la ROM de l'ESP32-S3, utilisé pour les pochettes (`src/sonos.cpp`) |
 
 Aucune bibliothèque externe n'est déclarée dans `platformio.ini` : le pilote d'écran, les
 primitives de dessin et le rendu de texte sont écrits pour ce projet (`src/lcd.cpp`, `src/gfx.cpp`).
@@ -27,6 +28,8 @@ primitives de dessin et le rendu de texte sont écrits pour ce projet (`src/lcd.
 | Quoi | Utilisation |
 | --- | --- |
 | [NTP Pool Project](https://www.ntppool.org) (`pool.ntp.org`) | Heure réseau du plugin horloge |
+| Enceintes Sonos du réseau local (UPnP, port 1400) | Morceau en cours, lu directement sur les enceintes |
+| Serveur d'images de Spotify (`i.scdn.co`) | Pochette du morceau en cours |
 
 ## Sources et références
 
@@ -43,6 +46,8 @@ Rien n'est copié tel quel de ces projets, mais le code s'appuie dessus.
   `lcdPresent()` repose sur le comportement de `lcd_rgb_panel_fill_bounce_buffer()`, et le choix
   du tampon dans `src/lcd.cpp` contourne un défaut de `lcd_rgb_panel_eof_handler()` (image
   décalée après une interruption perdue).
+- **[SoCo](https://github.com/SoCo/SoCo)** et **[sonos.svrooij.io](https://sonos.svrooij.io/)** : documentation
+  communautaire du protocole UPnP des enceintes Sonos, consultée pour `src/sonos.cpp`.
 - **Algorithme de Bresenham** : tracé de lignes de `gfxLine()`.
 - **Mélange RGB565 en une multiplication** (masque `0x07E0F81F`) : astuce classique, sans auteur
   identifié, utilisée par `blend565()` pour l'antialiasing du texte.
