@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <freertos/idf_additions.h>
+#include "net.h"
 #include "secrets.h"
 
 // Lieu des prévisions tant qu'aucun n'a été choisi dans le back office. A défaut : Bruxelles.
@@ -68,7 +69,7 @@ static bool fetch() {
   // HTTP/1.0 : la réponse arrive d'un bloc, puis le serveur ferme la connexion
   c.printf("GET /v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m,weather_code,is_day"
            "&hourly=temperature_2m,weather_code,precipitation_probability,is_day&forecast_hours=%d"
-           "&minutely_15=precipitation&forecast_minutely_15=%d&timeformat=unixtime HTTP/1.0\r\nHost: " HOST "\r\n\r\n",
+           "&minutely_15=precipitation&forecast_minutely_15=%d&timeformat=unixtime&timezone=auto HTTP/1.0\r\nHost: " HOST "\r\n\r\n",
            place.latitude, place.longitude, WEATHER_HOURS, WEATHER_QUARTERS);
   size_t len = 0;
   uint32_t t0 = millis();
@@ -107,6 +108,14 @@ static bool fetch() {
     if (v[1][i] >= RAIN_MM) w.rain_quarters |= 1 << i;
   }
 
+  // L'heure locale suit le fuseau du lieu. Un décalage fixe ne change d'heure, été comme hiver,
+  // qu'à la lecture suivante : dans le fuseau par défaut, on garde donc sa règle complète.
+  const char *zone = value(resp, "timezone"), *offset = value(resp, "utc_offset_seconds");
+  if (zone && offset) {
+    bool home = strncmp(zone, "\"" NET_TIMEZONE_NAME "\"", sizeof(NET_TIMEZONE_NAME) + 1) == 0;
+    netSetTimezone(home ? NET_TIMEZONE_DEFAULT : atoi(offset));
+  }
+
   xSemaphoreTake(lock, portMAX_DELAY);
   current = w;
   valid = true;
@@ -120,9 +129,7 @@ static bool fetch() {
 static void weatherTask(void *) {
   for (;;) {
     uint32_t wait = 500;  // en attendant le Wi-Fi
-    if (!settings.enabled) {
-      wait = REFRESH_MS;
-    } else if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) {
       bool ok = fetch();
       if (!ok) Serial.println("Météo : pas de réponse");
       wait = ok ? REFRESH_MS : RETRY_MS;
