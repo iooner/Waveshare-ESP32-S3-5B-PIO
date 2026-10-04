@@ -1,6 +1,7 @@
 #include "sonos.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <freertos/idf_additions.h>
 #include <esp32s3/rom/tjpgd.h>
 
 #define SONOS_PORT       1400
@@ -388,7 +389,8 @@ void sonosBegin() {
   art_pool = (uint8_t *)heap_caps_malloc(ART_POOL, MALLOC_CAP_SPIRAM);
   if (!art_buf[0] || !art_buf[1] || !art_pool) art_jpeg = nullptr;  // pas de pochette
   resp = (char *)heap_caps_malloc(RESP_SIZE, MALLOC_CAP_SPIRAM);
-  if (resp) xTaskCreatePinnedToCore(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0);
+  // Pile en PSRAM, pour garder la RAM interne à l'écran : permis parce que la tâche n'écrit jamais en flash
+  if (resp) xTaskCreatePinnedToCoreWithCaps(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0, MALLOC_CAP_SPIRAM);
 }
 
 void sonosGet(SonosTrack &out) {
