@@ -41,6 +41,9 @@ struct LcdStats {
 };
 void lcdStats(LcdStats &out);
 
+// Images ratées depuis le démarrage
+uint32_t lcdBadFrames();
+
 // Découpe un rectangle aux bords de l'écran. Faux s'il n'en reste rien.
 static inline bool lcdClip(int16_t &x, int16_t &y, int16_t &w, int16_t &h) {
   if (x < 0) w += x, x = 0;

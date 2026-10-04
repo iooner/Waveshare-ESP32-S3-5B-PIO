@@ -1,14 +1,14 @@
 #include <Arduino.h>
 #include "board.h"
+#include "brightness.h"
 #include "lcd.h"
 #include "net.h"
 #include "plugin.h"
-
-#define BACKLIGHT_PERCENT  10
+#include "web.h"
 
 // Pages par ordre de priorité : la première qui a quelque chose à montrer est affichée.
-// Mettre &demo_plugin en tête pour la mire de test.
-static const Plugin *const pages[] = {&sonos_plugin, &clock_plugin};
+// Elles s'activent et se désactivent dans le back office (web.h) ; la mire de test est désactivée au départ.
+static const Plugin *const pages[] = {&demo_plugin, &sonos_plugin, &clock_plugin};
 
 void setup() {
   Serial.begin(115200);
@@ -28,9 +28,10 @@ void setup() {
   netBegin();
   pluginsBegin(&clock_bar_plugin, pages, sizeof(pages) / sizeof(pages[0]));
   lcdPresent();
+  webBegin();
 
   backlightBegin();
-  backlightSet(BACKLIGHT_PERCENT);
+  brightnessBegin();
 }
 
 // Toutes les 10 s sur le port série : l'écran a-t-il raté des images ?
@@ -48,8 +49,18 @@ static void reportLcdHealth() {
 }
 
 void loop() {
+  // Mise à jour du firmware en cours : les écritures en flash figent le balayage par à-coups,
+  // ce qui ne se voit pas sur un écran noir
+  if (webUpdating()) {
+    static bool cleared = false;
+    if (!cleared) gfxClear(COLOR_BG);
+    cleared = true;
+    lcdPresent();
+    return;
+  }
   pluginsLoop();
   reportLcdHealth();
+  brightnessLoop();
   // Affiche l'image et attend le rafraîchissement suivant de la dalle
   lcdPresent();
 }
