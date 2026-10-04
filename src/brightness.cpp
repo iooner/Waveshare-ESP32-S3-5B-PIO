@@ -9,9 +9,9 @@
 #define TWILIGHT_DEG  6.0f   // fondu entre 6° sous l'horizon (fin du crépuscule civil) et 6° au-dessus
 #define UPDATE_MS     10000  // le soleil monte d'un degré en 6 minutes au plus vite
 
-// Lus par la boucle d'affichage, écrits par le back office depuis une autre tâche. Quatre octets
-// sans lien entre eux : au pire, un mélange d'ancien et de nouveau pendant une image.
-static BrightnessSettings settings = {10, 2, false, false};
+// Lus par la boucle d'affichage, écrits par le back office depuis une autre tâche. Des valeurs
+// sans lien entre elles : au pire, un mélange d'ancien et de nouveau pendant une image.
+static BrightnessSettings settings = {10, 2, false, false, false, 23 * 60, 7 * 60};
 static volatile bool refresh = true;  // réglages changés : à appliquer sans attendre
 static int16_t applied = -1;          // luminosité en place
 
@@ -25,6 +25,17 @@ static float daylight() {
   return constrain((sun + TWILIGHT_DEG) / (2 * TWILIGHT_DEG), 0.0f, 1.0f);
 }
 
+// Vrai pendant la plage d'extinction, qui peut passer minuit. Faux tant que l'heure n'est pas reçue.
+static bool asleep(const BrightnessSettings &s) {
+  if (!s.sleep || !netTimeSynced()) return false;
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  uint16_t minute = t.tm_hour * 60 + t.tm_min;
+  if (s.sleep_from <= s.sleep_to) return minute >= s.sleep_from && minute < s.sleep_to;
+  return minute >= s.sleep_from || minute < s.sleep_to;
+}
+
 void brightnessBegin() {
   Preferences prefs;
   prefs.begin("ecran");
@@ -32,6 +43,9 @@ void brightnessBegin() {
   settings.night = prefs.getUChar("nuit", settings.night);
   settings.automatic = prefs.getBool("auto", settings.automatic);
   settings.red = prefs.getBool("rouge", settings.red);
+  settings.sleep = prefs.getBool("veille", settings.sleep);
+  settings.sleep_from = prefs.getUShort("debut", settings.sleep_from);
+  settings.sleep_to = prefs.getUShort("fin", settings.sleep_to);
   prefs.end();
   brightnessLoop();
 }
@@ -46,6 +60,7 @@ void brightnessLoop() {
   // La page se redessine d'elle-même quand la teinte change (plugin.cpp)
   gfxSetNight(s.red ? lroundf((1 - day) * GFX_NIGHT_MAX) : 0);
   uint8_t level = s.automatic ? lroundf(s.night + (s.day - s.night) * day) : s.day;
+  if (asleep(s)) level = 0;
   if (level == applied) return;
   backlightSet(level);
   applied = level;
@@ -61,8 +76,16 @@ void brightnessSettings(BrightnessSettings &out) {
 }
 
 void brightnessConfigure(const BrightnessSettings &s) {
-  BrightnessSettings n = {constrain(s.day, (uint8_t)1, (uint8_t)100), min<uint8_t>(s.night, 100), s.automatic, s.red};
-  if (n.day == settings.day && n.night == settings.night && n.automatic == settings.automatic && n.red == settings.red) return;
+  BrightnessSettings n = s;
+  n.day = constrain(s.day, (uint8_t)1, (uint8_t)100);
+  n.night = min<uint8_t>(s.night, 100);
+  n.sleep_from = min<uint16_t>(s.sleep_from, 24 * 60 - 1);
+  n.sleep_to = min<uint16_t>(s.sleep_to, 24 * 60 - 1);
+  const BrightnessSettings &o = settings;
+  if (n.day == o.day && n.night == o.night && n.automatic == o.automatic && n.red == o.red && n.sleep == o.sleep &&
+      n.sleep_from == o.sleep_from && n.sleep_to == o.sleep_to) {
+    return;
+  }
   settings = n;
   refresh = true;
 
@@ -72,5 +95,8 @@ void brightnessConfigure(const BrightnessSettings &s) {
   prefs.putUChar("nuit", n.night);
   prefs.putBool("auto", n.automatic);
   prefs.putBool("rouge", n.red);
+  prefs.putBool("veille", n.sleep);
+  prefs.putUShort("debut", n.sleep_from);
+  prefs.putUShort("fin", n.sleep_to);
   prefs.end();
 }

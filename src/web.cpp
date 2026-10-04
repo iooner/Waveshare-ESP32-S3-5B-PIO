@@ -29,7 +29,7 @@ static const char HEAD[] =
     "section>*{display:flex;align-items:center;gap:.7em;min-height:2.9em;border-top:1px solid #333}"
     "section>:first-child{border:0}input[type=checkbox]{width:1.3em;height:1.3em;margin-left:auto;accent-color:#30d158}"
     "input[type=range]{flex:1;min-width:0;accent-color:#0a84ff}input:not([type]),button{font:inherit;color:#fff;"
-    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}"
+    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}input[type=time]{font:inherit;color:#fff;background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
     "button{background:#0a84ff}#r{flex-wrap:wrap;padding:.5em 0}#r:empty{display:none}#r button{background:#2c2c2e}"
     "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
     "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}</style>"
@@ -39,7 +39,8 @@ static const char HEAD[] =
 static const char PAGE_ROW[] = "<label>%c%s<input type=checkbox name=p%u%s></label>";
 
 // Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
-// ou non, luminosité de nuit (deux fois), rouge coché ou non, latitude, longitude
+// ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
+// et minutes d'extinction puis de rallumage, latitude, longitude
 static const char SETTINGS[] =
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
@@ -49,9 +50,13 @@ static const char SETTINGS[] =
     "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
     "<label>Cycle automatique<input type=checkbox name=auto%s></label>"
     "<label>Nuit<input type=range name=nuit min=0 max=100 value=%u><b>%u %%</b></label>"
-    "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label></section>"
+    "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label>"
+    "<label>Extinction programmée<input type=checkbox name=veille%s></label>"
+    "<label>Éteindre à<input type=time name=debut value=%02u:%02u></label>"
+    "<label>Rallumer à<input type=time name=fin value=%02u:%02u></label></section>"
     "<p>Le cycle passe du niveau de jour au niveau de nuit quand le soleil se couche. Sans lui, seul le niveau de "
-    "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle."
+    "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle. L'extinction programmée éteint "
+    "tout à fait l'écran entre les deux heures, chaque jour."
     "<h2>Lieu de la météo et de l'heure</h2><section>"
     "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
     "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
@@ -116,6 +121,20 @@ static const char *param(const char *query, const char *name) {
   return nullptr;
 }
 
+// Minutes depuis minuit d'une heure "HH:MM", dont le deux-points arrive codé en %3A. -1 si elle
+// est mal formée.
+static int minuteOfDay(const char *value) {
+  if (!value) return -1;
+  char *end;
+  long hours = strtol(value, &end, 10);
+  if (end == value) return -1;
+  if (*end == ':') end++;
+  else if (strncasecmp(end, "%3A", 3) == 0) end += 3;
+  else return -1;
+  long minutes = strtol(end, nullptr, 10);
+  return hours >= 0 && hours < 24 && minutes >= 0 && minutes < 60 ? hours * 60 + minutes : -1;
+}
+
 // La page envoie tous ses réglages à chaque fois. Une case décochée n'est pas envoyée : paramètre
 // absent = désactivé.
 static void apply(const char *query) {
@@ -143,6 +162,10 @@ static void apply(const char *query) {
   if (night) b.night = constrain(atoi(night), 0, 100);
   b.automatic = param(query, "auto") != nullptr;
   b.red = param(query, "rouge") != nullptr;
+  b.sleep = param(query, "veille") != nullptr;
+  int from = minuteOfDay(param(query, "debut")), to = minuteOfDay(param(query, "fin"));
+  if (from >= 0) b.sleep_from = from;
+  if (to >= 0) b.sleep_to = to;
   brightnessConfigure(b);
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
@@ -169,7 +192,8 @@ static void sendPage(WiFiClient &c) {
   AstroSettings sky;
   astroSettings(sky);
   add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
-      b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", s.latitude, s.longitude);
+      b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", b.sleep ? " checked" : "",
+      b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, s.latitude, s.longitude);
 
   char weather[40];
   int32_t age = weatherAge();
