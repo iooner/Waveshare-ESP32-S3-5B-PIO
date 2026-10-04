@@ -1,29 +1,34 @@
 #include "plugin.h"
 
-static const Plugin *const *list;
+static const Plugin *bar;
+static const Plugin *const *pages;
 static uint8_t count, current;
 static uint32_t shown_at;
 
-static void showPlugin(uint8_t index) {
+static void showPage(uint8_t index) {
   current = index;
   shown_at = millis();
-  Serial.printf("Plugin : %s\n", list[index]->name);
-  list[index]->show();
+  Serial.printf("Page : %s\n", pages[index]->name);
+  pages[index]->show();
 }
 
-void pluginsBegin(const Plugin *const *plugins, uint8_t n) {
-  list = plugins;
+void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
+  bar = b;
+  pages = p;
   count = n;
+  if (bar->begin) bar->begin();
   for (uint8_t i = 0; i < count; i++) {
-    if (list[i]->begin) list[i]->begin();
+    if (pages[i]->begin) pages[i]->begin();
   }
-  showPlugin(0);
+  bar->show();
+  showPage(0);
 }
 
 void pluginsLoop() {
-  const Plugin *p = list[current];
+  if (bar->update) bar->update();
+  const Plugin *p = pages[current];
   if (count > 1 && p->seconds && millis() - shown_at >= p->seconds * 1000UL) {
-    showPlugin((current + 1) % count);
+    showPage((current + 1) % count);
   } else if (p->update) {
     p->update();
   }

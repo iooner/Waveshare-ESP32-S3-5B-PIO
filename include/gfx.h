@@ -42,3 +42,10 @@ void gfxBlit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pixels)
 int16_t gfxText(int16_t x, int16_t y, const char *text, const GfxFont &font, uint16_t color,
                 int32_t bg = GFX_TRANSPARENT);
 int16_t gfxTextWidth(const char *text, const GfxFont &font);
+
+enum GfxAlign { GFX_LEFT, GFX_CENTER, GFX_RIGHT };
+
+// Texte opaque aligné dans une boîte de largeur w. Le reste de la boîte est repeint avec le fond :
+// un texte plus court efface le précédent. Un texte trop long est coupé et terminé par "...".
+void gfxTextBox(int16_t x, int16_t y, int16_t w, const char *text, const GfxFont &font, uint16_t color, uint16_t bg,
+                GfxAlign align = GFX_LEFT);

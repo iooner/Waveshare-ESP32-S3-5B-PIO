@@ -22,7 +22,7 @@ static void textCentered(int16_t y, const char *text, const GfxFont &font) {
 }
 
 static void demoShow() {
-  gfxClear(COLOR_BG);
+  gfxFillRect(0, PAGE_Y, LCD_WIDTH, PAGE_HEIGHT, COLOR_BG);
   textCentered(240, "Hello World!", font_sans48);
   textCentered(320, "Écran prêt, 1024 x 600", font_sans24);
   // Barres de test : ordre attendu rouge, vert, bleu

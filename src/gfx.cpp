@@ -143,3 +143,28 @@ int16_t gfxText(int16_t x, int16_t y, const char *text, const GfxFont &font, uin
   lcdDirty(dx0, dy0, dx1 - dx0, dy1 - dy0);
   return width;
 }
+
+void gfxTextBox(int16_t x, int16_t y, int16_t w, const char *text, const GfxFont &font, uint16_t color, uint16_t bg,
+                GfxAlign align) {
+  // Coupe le texte à la largeur de la boîte, en gardant la place des points de suspension
+  char fitted[160];
+  int16_t dots = gfxTextWidth("...", font), width = 0;
+  size_t keep = 0;  // octets qui tiennent avec les points de suspension
+  const char *p = text;
+  while (*p) {
+    width += nextGlyph(p, font).advance;
+    if (width + dots <= w) keep = p - text;
+    if (width > w || (size_t)(p - text) >= sizeof(fitted) - 4) {
+      memcpy(fitted, text, keep);
+      strcpy(fitted + keep, "...");
+      text = fitted;
+      break;
+    }
+  }
+
+  int16_t tw = gfxTextWidth(text, font);
+  int16_t tx = align == GFX_LEFT ? x : align == GFX_RIGHT ? x + w - tw : x + (w - tw) / 2;
+  gfxFillRect(x, y, tx - x, font.line_height, bg);
+  gfxText(tx, y, text, font, color, bg);
+  gfxFillRect(tx + tw, y, x + w - tx - tw, font.line_height, bg);
+}
