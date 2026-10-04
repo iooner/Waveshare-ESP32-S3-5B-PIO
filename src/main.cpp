@@ -6,8 +6,9 @@
 
 #define BACKLIGHT_PERCENT  10
 
-// Plugins affichés, dans l'ordre de défilement. Ajouter &demo_plugin pour la mire de test.
-static const Plugin *const plugins[] = {&clock_plugin};
+// Pages par ordre de priorité : la première qui a quelque chose à montrer est affichée.
+// Mettre &demo_plugin en tête pour la mire de test.
+static const Plugin *const pages[] = {&sonos_plugin, &clock_plugin};
 
 void setup() {
   Serial.begin(115200);
@@ -25,7 +26,7 @@ void setup() {
   if (!lcdBegin()) Serial.println("Echec init LCD");
 
   netBegin();
-  pluginsBegin(plugins, sizeof(plugins) / sizeof(plugins[0]));
+  pluginsBegin(&clock_bar_plugin, pages, sizeof(pages) / sizeof(pages[0]));
   lcdPresent();
 
   backlightBegin();
@@ -39,9 +40,11 @@ static void reportLcdHealth() {
   last = millis();
   LcdStats s;
   lcdStats(s);
-  Serial.printf("Ecran : %lu images, %lu ratées, %lu morceaux en retard, %lu remis dans le bon tampon, copie max %lu us\n",
+  Serial.printf("Ecran : %lu images, %lu ratées, %lu morceaux en retard, copie max %lu us, %u lignes lues en PSRAM, "
+                "%u cases libres, %lu Ko de RAM interne libres\n",
                 (unsigned long)s.frames, (unsigned long)s.bad_frames, (unsigned long)s.late_chunks,
-                (unsigned long)s.fixed_chunks, (unsigned long)s.max_copy_us);
+                (unsigned long)s.max_copy_us, s.psram_rows, s.free_slots,
+                (unsigned long)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
 }
 
 void loop() {

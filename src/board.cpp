@@ -1,5 +1,7 @@
 #include "board.h"
 #include <Wire.h>
+#include <driver/i2c_master.h>
+#include "esp32-hal-i2c.h"
 #include "board_pins.h"
 
 // --- I2C ---
@@ -31,7 +33,7 @@ bool exioBegin() {
   return Wire.endTransmission() == 0;
 }
 
-// Appelé depuis loop() et depuis la tâche esp_timer (PWM du rétroéclairage)
+// Appelé depuis plusieurs tâches
 void exioWrite(uint8_t pin, bool level) {
   xSemaphoreTake(exio_mutex, portMAX_DELAY);
   if (level) exio_state |= (1 << pin);
@@ -44,34 +46,74 @@ void exioWrite(uint8_t pin, bool level) {
 
 // --- Rétroéclairage ---
 // L'AP3032 n'a qu'une entrée CTRL, câblée sur l'expander I2C (EXIO2) : pas de PWM matérielle.
-// On hache donc CTRL en logiciel, une écriture I2C par front, cadencée par esp_timer.
-// Mesuré sur la carte : ~121 us par écriture avec l'I2C à 400 kHz, donc en dessous de ~5 %
-// le temps d'allumage n'est plus tenu. Le bus I2C reçoit 2 écritures par période.
-#define BL_PWM_HZ  250
+// Allumer puis éteindre par deux écritures I2C séparées rend la durée d'allumage dépendante de
+// l'ordonnanceur : mesuré Wi-Fi allumé, 116 à 1800 us au lieu de 528, d'où un scintillement.
+// Les deux écritures partent donc dans UNE transaction (START, allumé, START, éteint, STOP) :
+// le CH422G applique chaque octet dès qu'il le reçoit (vérifié sur la carte en relisant ses
+// sorties au milieu d'une transaction), et la durée d'allumage est alors fixée par l'horloge
+// I2C, générée par le matériel. On règle la luminosité en changeant la fréquence de cette horloge.
+#define BL_PWM_HZ      250
+#define BL_PULSE_BITS  19.5f  // périodes d'horloge I2C entre les deux fronts de la sortie
 
-static esp_timer_handle_t bl_period_timer, bl_off_timer;
+static i2c_master_dev_handle_t pulse_dev;
 static volatile uint8_t bl_percent = 100;
 
-static void blPeriodCb(void *) {
-  uint8_t p = bl_percent;
-  if (p == 0) return;
-  exioWrite(EXIO_LCD_BL, HIGH);
-  if (p < 100) esp_timer_start_once(bl_off_timer, (1000000UL / BL_PWM_HZ) * p / 100);
+// Accès au CH422G sans adresse gérée par le pilote, à la fréquence qui donne la durée voulue
+static void setPulseClock(uint32_t hz) {
+  if (pulse_dev) i2c_master_bus_rm_device(pulse_dev);
+  pulse_dev = nullptr;
+  i2c_device_config_t cfg = {};
+  cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+  cfg.device_address = I2C_DEVICE_ADDRESS_NOT_USED;
+  cfg.scl_speed_hz = hz;
+  i2c_master_bus_add_device((i2c_master_bus_handle_t)i2cBusHandle(0), &cfg, &pulse_dev);
 }
 
-static void blOffCb(void *) {
-  exioWrite(EXIO_LCD_BL, LOW);
+static void sendPulse() {
+  xSemaphoreTake(exio_mutex, portMAX_DELAY);
+  if (pulse_dev) {
+    uint8_t on[2] = {CH422G_ADDR_OUT << 1, (uint8_t)(exio_state | 1 << EXIO_LCD_BL)};
+    uint8_t off[2] = {CH422G_ADDR_OUT << 1, (uint8_t)(exio_state & ~(1 << EXIO_LCD_BL))};
+    i2c_operation_job_t ops[5] = {};
+    ops[0].command = I2C_MASTER_CMD_START;
+    ops[1].command = I2C_MASTER_CMD_WRITE;
+    ops[1].write.ack_check = true;
+    ops[1].write.data = on;
+    ops[1].write.total_bytes = sizeof(on);
+    ops[2].command = I2C_MASTER_CMD_START;
+    ops[3].command = I2C_MASTER_CMD_WRITE;
+    ops[3].write.ack_check = true;
+    ops[3].write.data = off;
+    ops[3].write.total_bytes = sizeof(off);
+    ops[4].command = I2C_MASTER_CMD_STOP;
+    i2c_master_execute_defined_operations(pulse_dev, ops, 5, 50);
+  }
+  xSemaphoreGive(exio_mutex);
+}
+
+// Priorité au-dessus de la tâche Wi-Fi (23) : seul l'instant de l'impulsion dépend d'elle, pas sa durée
+static void backlightTask(void *) {
+  TickType_t wake = xTaskGetTickCount();
+  for (;;) {
+    vTaskDelayUntil(&wake, pdMS_TO_TICKS(1000 / BL_PWM_HZ));
+    uint8_t p = bl_percent;
+    if (p > 0 && p < 100) sendPulse();
+  }
 }
 
 void backlightBegin() {
-  esp_timer_create_args_t period = {.callback = blPeriodCb, .name = "bl_period"};
-  esp_timer_create_args_t off = {.callback = blOffCb, .name = "bl_off"};
-  esp_timer_create(&period, &bl_period_timer);
-  esp_timer_create(&off, &bl_off_timer);
-  esp_timer_start_periodic(bl_period_timer, 1000000UL / BL_PWM_HZ);
+  xTaskCreatePinnedToCore(backlightTask, "backlight", 4096, nullptr, 24, nullptr, 0);
 }
 
 void backlightSet(uint8_t percent) {
-  bl_percent = min<uint8_t>(percent, 100);
-  if (bl_percent == 0) exioWrite(EXIO_LCD_BL, LOW);
+  percent = min<uint8_t>(percent, 100);
+  if (percent > 0 && percent < 100) {
+    // 40 us par pour cent, plus 128 us : la durée d'allumage qu'avait l'ancien PWM logiciel
+    float on_us = percent * 40.0f + 128.0f;
+    xSemaphoreTake(exio_mutex, portMAX_DELAY);
+    setPulseClock((uint32_t)(BL_PULSE_BITS * 1000000.0f / on_us));
+    xSemaphoreGive(exio_mutex);
+  }
+  bl_percent = percent;
+  if (percent == 0 || percent == 100) exioWrite(EXIO_LCD_BL, percent == 100);
 }

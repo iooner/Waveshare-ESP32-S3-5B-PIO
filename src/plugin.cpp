@@ -1,30 +1,41 @@
 #include "plugin.h"
 
-static const Plugin *const *list;
-static uint8_t count, current;
-static uint32_t shown_at;
+static const Plugin *bar;
+static const Plugin *const *pages;
+static uint8_t count;
+static int8_t current = -1;
 
-static void showPlugin(uint8_t index) {
+static void showPage(uint8_t index) {
+  if (current >= 0 && pages[current]->hide) pages[current]->hide();
   current = index;
-  shown_at = millis();
-  Serial.printf("Plugin : %s\n", list[index]->name);
-  list[index]->show();
+  Serial.printf("Page : %s\n", pages[index]->name);
+  // L'écran est effacé et présenté avant que la page ne dessine : ce gros transfert en PSRAM se
+  // fait ainsi pendant que rien à l'écran n'en dépend (une page peut afficher une image)
+  gfxClear(COLOR_BG);
+  lcdPresent();
+  if (!pages[index]->fullscreen) bar->show();
+  pages[index]->show();
 }
 
-void pluginsBegin(const Plugin *const *plugins, uint8_t n) {
-  list = plugins;
+void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
+  bar = b;
+  pages = p;
   count = n;
+  if (bar->begin) bar->begin();
   for (uint8_t i = 0; i < count; i++) {
-    if (list[i]->begin) list[i]->begin();
+    if (pages[i]->begin) pages[i]->begin();
   }
-  showPlugin(0);
+  pluginsLoop();
 }
 
 void pluginsLoop() {
-  const Plugin *p = list[current];
-  if (count > 1 && p->seconds && millis() - shown_at >= p->seconds * 1000UL) {
-    showPlugin((current + 1) % count);
-  } else if (p->update) {
-    p->update();
+  uint8_t wanted = 0;
+  while (wanted < count - 1 && pages[wanted]->active && !pages[wanted]->active()) wanted++;
+  if (wanted != current) {
+    showPage(wanted);
+    return;
   }
+  const Plugin *p = pages[current];
+  if (!p->fullscreen && bar->update) bar->update();
+  if (p->update) p->update();
 }
