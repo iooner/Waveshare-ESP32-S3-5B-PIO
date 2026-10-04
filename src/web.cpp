@@ -24,7 +24,7 @@ static const char HEAD[] =
     "small{color:#999}</style><h1>Écran</h1><form action=/set><h2>Plugins</h2>";
 
 // Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
-// ou non, luminosité de nuit (deux fois), latitude, longitude
+// ou non, luminosité de nuit (deux fois), rouge coché ou non, latitude, longitude
 static const char SETTINGS[] =
     "<label><input type=checkbox name=meteo%s> Météo</label>"
     "<label><input type=checkbox name=soleil%s> Soleil : lever et coucher</label>"
@@ -35,6 +35,8 @@ static const char SETTINGS[] =
     "<label><input type=checkbox name=auto%s> Cycle automatique : baisse quand le soleil se couche</label>"
     "<label>La nuit <input type=range name=nuit min=0 max=100 value=%u onchange=form.submit() "
     "oninput=nextElementSibling.textContent=value> <span>%u</span> %%</label>"
+    "<label><input type=checkbox name=rouge%s> Rouge la nuit : les couleurs virent au rouge sombre quand le soleil "
+    "se couche</label>"
     "<h2>Lieu de la météo</h2><input id=q placeholder='Chercher une ville'> <button type=button onclick=s()>"
     "Chercher</button><div id=r></div><label>Latitude <input id=lat name=lat value=%.4f></label>"
     "<label>Longitude <input id=lon name=lon value=%.4f></label><p><button>Enregistrer</button></form>"
@@ -112,6 +114,7 @@ static void apply(const char *query) {
   if (day) b.day = constrain(atoi(day), 1, 100);
   if (night) b.night = constrain(atoi(night), 0, 100);
   b.automatic = param(query, "auto") != nullptr;
+  b.red = param(query, "rouge") != nullptr;
   brightnessConfigure(b);
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
@@ -138,8 +141,8 @@ static void sendPage(WiFiClient &c) {
   brightnessSettings(b);
   AstroSettings sky;
   astroSettings(sky);
-  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night, s.latitude,
-      s.longitude);
+  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
+      b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", s.latitude, s.longitude);
 
   char weather[40];
   int32_t age = weatherAge();

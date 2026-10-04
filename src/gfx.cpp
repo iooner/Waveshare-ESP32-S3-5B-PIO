@@ -1,7 +1,27 @@
 #include "gfx.h"
 #include "lcd.h"
 
+#define NIGHT_RED  200  // rouge donné au blanc par la teinte de nuit complète
+
 typedef uint32_t __attribute__((may_alias)) pixpair_t;
+
+static uint8_t night = 0;  // teinte de nuit en place
+
+void gfxSetNight(uint8_t level) {
+  night = min<uint8_t>(level, GFX_NIGHT_MAX);
+}
+
+uint8_t gfxNight() {
+  return night;
+}
+
+// Couleur telle qu'elle est dessinée, teinte de nuit comprise
+static uint16_t tinted(uint16_t color) {
+  if (!night) return color;
+  int32_t r = color >> 11 << 3, g = (color >> 5 & 0x3F) << 2, b = (color & 0x1F) << 3;
+  int32_t red = ((r * 77 + g * 150 + b * 29) >> 8) * NIGHT_RED / 255;  // d'après la clarté de la couleur
+  return RGB565(r + (red - r) * night / GFX_NIGHT_MAX, g - g * night / GFX_NIGHT_MAX, b - b * night / GFX_NIGHT_MAX);
+}
 
 // Remplit n pixels, deux par écriture
 static inline void fill16(uint16_t *dst, uint16_t color, int32_t n) {
@@ -37,12 +57,12 @@ void gfxClear(uint16_t color) {
 
 void gfxPixel(int16_t x, int16_t y, uint16_t color) {
   if (x < 0 || y < 0 || x >= LCD_WIDTH || y >= LCD_HEIGHT) return;
-  lcd_fb[y * LCD_WIDTH + x] = color;
+  lcd_fb[y * LCD_WIDTH + x] = tinted(color);
   lcdDirty(x, y, 1, 1);
 }
 
 void gfxFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-  fillRaw(x, y, w, h, color);
+  fillRaw(x, y, w, h, tinted(color));
   lcdDirty(x, y, w, h);
 }
 
@@ -58,6 +78,7 @@ void gfxLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color) {
   if (x0 == x1) return gfxFillRect(x0, min(y0, y1), 1, abs(y1 - y0) + 1, color);
 
   lcdDirty(min(x0, x1), min(y0, y1), abs(x1 - x0) + 1, abs(y1 - y0) + 1);
+  color = tinted(color);
   // Bresenham
   int16_t dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
   int16_t dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
@@ -76,7 +97,10 @@ void gfxBlit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pixels)
   if (!lcdClip(cx, cy, cw, ch)) return;
   const uint16_t *src = pixels + (cy - y) * w + (cx - x);
   uint16_t *dst = lcd_fb + cy * LCD_WIDTH + cx;
-  for (int16_t i = 0; i < ch; i++, src += w, dst += LCD_WIDTH) memcpy(dst, src, cw * sizeof(uint16_t));
+  for (int16_t i = 0; i < ch; i++, src += w, dst += LCD_WIDTH) {
+    if (!night) memcpy(dst, src, cw * sizeof(uint16_t));
+    else for (int16_t k = 0; k < cw; k++) dst[k] = tinted(src[k]);
+  }
   lcdDirty(cx, cy, cw, ch);
 }
 
@@ -103,6 +127,8 @@ int16_t gfxTextWidth(const char *text, const GfxFont &font) {
 int16_t gfxText(int16_t x, int16_t y, const char *text, const GfxFont &font, uint16_t color, int32_t bg) {
   int16_t width = gfxTextWidth(text, font);
   bool opaque = bg != GFX_TRANSPARENT;
+  color = tinted(color);
+  if (opaque) bg = tinted(bg);
 
   // Zone modifiée, signalée en une fois : la boîte du texte si elle est repeinte, plus les
   // glyphes qui en débordent

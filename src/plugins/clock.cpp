@@ -4,6 +4,7 @@
 #include <time.h>
 #include "astro.h"
 #include "fonts/font_clock.h"
+#include "fonts/font_sans24.h"
 #include "fonts/font_sans32.h"
 #include "fonts/font_sans40.h"
 #include "fonts/font_sans48.h"
@@ -60,7 +61,12 @@ static void barShow() {
 
 // --- Page plein écran ---
 #define BIG_TIME_Y  (-44)  // les chiffres commencent 68 pixels sous le haut de leur case
+#define BIG_SKY_Y   190    // soleil et lune, en petit sous l'heure
 #define BIG_DATE_Y  230
+
+// Les chiffres de l'horloge, dans une case arrêtée à leur pied : celle de la police descend
+// 55 pixels plus bas et effacerait la ligne du soleil et de la lune à chaque seconde
+static const GfxFont clock_digits = {font_clock.bitmap, font_clock.glyphs, font_clock.first, font_clock.last, 218};
 
 // Météo : une colonne pour maintenant, puis une par heure à venir. Les pictogrammes tombent pile
 // sur les cases du pilote d'écran, et chaque rangée tient dans ses 16 couleurs (lcd.h) : une
@@ -68,7 +74,7 @@ static void barShow() {
 #define WX_COLS     7
 #define WX_COL_W    128
 #define WX_X        ((LCD_WIDTH - WX_COLS * WX_COL_W) / 2)
-#define WX_INFO_Y   300  // sur toute la largeur : annonce de pluie, sinon soleil et lune
+#define WX_ALERT_Y  300  // annonce de pluie, sur toute la largeur
 #define WX_LABEL_Y  348
 #define WX_ICON_Y   398
 #define WX_TEMP_Y   466
@@ -79,7 +85,8 @@ static void barShow() {
 
 static uint32_t shown_weather;  // version de la météo affichée, 0 = rien
 static time_t shown_hour;       // première heure de prévision affichée
-static char shown_info[96];     // ligne d'information affichée
+static char shown_alert[40];    // annonce de pluie affichée
+static char shown_sky[96];      // ligne du soleil et de la lune affichée
 
 // Caractère de font_weather64 pour un code météo WMO
 static char weatherIcon(uint8_t code, bool day) {
@@ -180,19 +187,15 @@ static void almanac(time_t now, char *out, size_t cap) {
   }
 }
 
-// Ligne d'information : l'annonce de pluie quand il y en a une, sinon le soleil et la lune
-static void infoUpdate(const Weather &w, time_t now) {
-  static char sky[sizeof(shown_info)];  // refait une fois par seconde : le calcul ne vaut pas chaque image
+static void skyUpdate() {
+  static char sky[sizeof(shown_sky)];  // refait une fois par seconde : le calcul ne vaut pas chaque image
   static time_t sky_at = -1;
+  time_t now = time(nullptr);
   if (now != sky_at) almanac(now, sky, sizeof(sky));
   sky_at = now;
-
-  char alert[40];
-  rainAlert(w, now, alert, sizeof(alert));
-  const char *info = alert[0] ? alert : sky;
-  if (strcmp(info, shown_info) == 0) return;
-  gfxTextBox(MARGIN_X, WX_INFO_Y, CONTENT_W, info, font_sans32, alert[0] ? COLOR_RAIN : COLOR_DIM, COLOR_BG, GFX_CENTER);
-  strlcpy(shown_info, info, sizeof(shown_info));
+  if (strcmp(sky, shown_sky) == 0) return;
+  gfxTextBox(MARGIN_X, BIG_SKY_Y, CONTENT_W, sky, font_sans24, COLOR_DIM, COLOR_BG, GFX_CENTER);
+  strlcpy(shown_sky, sky, sizeof(shown_sky));
 }
 
 static void weatherUpdate() {
@@ -200,7 +203,13 @@ static void weatherUpdate() {
   uint32_t version = weatherGet(w);
   if (!version) w.hour_count = w.quarter_count = 0;
   time_t secs = time(nullptr);
-  infoUpdate(w, secs);
+
+  char alert[sizeof(shown_alert)];
+  rainAlert(w, secs, alert, sizeof(alert));
+  if (strcmp(alert, shown_alert) != 0) {
+    gfxTextBox(MARGIN_X, WX_ALERT_Y, CONTENT_W, alert, font_sans32, COLOR_RAIN, COLOR_BG, GFX_CENTER);
+    strlcpy(shown_alert, alert, sizeof(shown_alert));
+  }
 
   // Les prévisions commencent à la prochaine heure : la bande avance d'une colonne quand
   // l'heure change, sans attendre la lecture suivante
@@ -229,11 +238,11 @@ static void weatherUpdate() {
 // "HH:MM:SS" centré. Les chiffres ont tous la même largeur : chaque caractère garde sa place,
 // on ne redessine que ceux qui changent (un seul chiffre la plupart des secondes).
 static void drawBigTime(const char *text) {
-  int16_t x = (LCD_WIDTH - gfxTextWidth(text, font_clock)) / 2;
+  int16_t x = (LCD_WIDTH - gfxTextWidth(text, clock_digits)) / 2;
   for (uint8_t i = 0; text[i]; i++) {
     char one[2] = {text[i], 0};
-    if (text[i] != shown_time[i]) gfxText(x, BIG_TIME_Y, one, font_clock, COLOR_TEXT, COLOR_BG);
-    x += gfxTextWidth(one, font_clock);
+    if (text[i] != shown_time[i]) gfxText(x, BIG_TIME_Y, one, clock_digits, COLOR_TEXT, COLOR_BG);
+    x += gfxTextWidth(one, clock_digits);
     shown_time[i] = text[i];
   }
 }
@@ -249,13 +258,15 @@ static void bigUpdate() {
     gfxTextBox(0, BIG_DATE_Y, LCD_WIDTH, date_text, font_sans48, COLOR_TEXT, COLOR_BG, GFX_CENTER);
     strlcpy(shown_date, date_text, sizeof(shown_date));
   }
+  skyUpdate();
   weatherUpdate();
 }
 
 static void bigShow() {
   memset(shown_time, 0, sizeof(shown_time));
-  shown_date[0] = 1;
-  shown_weather = shown_hour = shown_info[0] = 0;  // la page vient d'être effacée
+  // Rien de ce qui est noté comme affiché ne correspond plus : tout est redessiné, textes vides compris
+  shown_date[0] = shown_sky[0] = shown_alert[0] = 1;
+  shown_weather = UINT32_MAX;
   bigUpdate();
 }
 

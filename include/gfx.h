@@ -28,6 +28,13 @@ struct GfxFont {
   uint16_t line_height;
 };
 
+// Teinte de nuit, de 0 (couleurs telles quelles) à GFX_NIGHT_MAX : chaque couleur dessinée glisse
+// vers un rouge sombre de même clarté, comme l'écran de nuit d'un téléphone posé sur sa base.
+// Elle vaut pour ce qui est dessiné ensuite : après un changement, la page est à redessiner.
+#define GFX_NIGHT_MAX  16
+void gfxSetNight(uint8_t level);
+uint8_t gfxNight();
+
 void gfxClear(uint16_t color);
 void gfxPixel(int16_t x, int16_t y, uint16_t color);
 void gfxFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);

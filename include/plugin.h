@@ -29,7 +29,8 @@ struct Plugin {
   bool fullscreen;   // la page occupe aussi la barre
   void (*begin)();   // une fois au démarrage, avant tout affichage. Peut être nul.
   bool (*active)();  // la page a-t-elle quelque chose à montrer ? Nul = toujours.
-  void (*show)();    // le plugin prend sa zone, déjà effacée : il la dessine en entier
+  void (*show)();    // dessine toute sa zone. Elle est effacée quand la page arrive, mais pas quand la teinte de
+                     // nuit change : tout doit être repeint, fond compris (gfxTextBox le fait).
   void (*update)();  // à chaque image tant qu'il est affiché : ne redessiner que ce qui change. Peut être nul.
   void (*hide)();    // avant de céder la place. Peut être nul.
   bool optional;     // désactivée tant qu'on ne l'active pas dans le back office (web.h)

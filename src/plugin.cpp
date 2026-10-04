@@ -7,6 +7,7 @@ static const Plugin *bar;
 static const Plugin *const *pages;
 static uint8_t count;
 static int8_t current = -1;
+static uint8_t drawn_night;      // teinte de nuit de ce qui est à l'écran
 static bool enabled[MAX_PAGES];  // modifié par le back office, depuis une autre tâche
 
 static void showPage(uint8_t index) {
@@ -41,10 +42,19 @@ void pluginsLoop() {
   uint8_t wanted = 0;
   while (wanted < count - 1 && (!enabled[wanted] || (pages[wanted]->active && !pages[wanted]->active()))) wanted++;
   if (wanted != current) {
+    drawn_night = gfxNight();
     showPage(wanted);
     return;
   }
   const Plugin *p = pages[current];
+  // Teinte de nuit changée : la page se redessine par-dessus elle-même. Sans effacer, pour que
+  // l'écran ne passe pas par le noir à chaque pas du fondu.
+  if (gfxNight() != drawn_night) {
+    drawn_night = gfxNight();
+    if (!p->fullscreen) bar->show();
+    p->show();
+    return;
+  }
   if (!p->fullscreen && bar->update) bar->update();
   if (p->update) p->update();
 }

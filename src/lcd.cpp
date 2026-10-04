@@ -176,12 +176,13 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
       else px[k / 2] = last_index << 4;
     }
     if (!used || many) continue;
-    // Case identique à celle de la ligne affichée, avec les mêmes couleurs : les deux lignes la
-    // partagent. Un chiffre d'horloge qui change ne prend ainsi que ses propres cases.
+    // Case identique à celle de la ligne affichée : les deux lignes la partagent. Un chiffre
+    // d'horloge qui change ne prend ainsi que ses propres cases. Une case ne contient que des
+    // numéros de couleur, lus dans la palette de chaque ligne : quand seules les couleurs
+    // changent (teinte de nuit), toutes les cases se partagent.
     if (old.head != NONE && (old.mask >> c & 1)) {
       const RowHead &oh = heads[old.head];
-      if (memcmp(cells[oh.cell[c]].px, px, sizeof(px)) == 0 &&
-          memcmp(oh.palette, h.palette, colors * sizeof(uint16_t)) == 0) {
+      if (memcmp(cells[oh.cell[c]].px, px, sizeof(px)) == 0) {
         h.cell[c] = oh.cell[c];
         packed.mask |= 1 << c;
         continue;

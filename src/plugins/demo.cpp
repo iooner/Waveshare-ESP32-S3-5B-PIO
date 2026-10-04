@@ -29,6 +29,7 @@ static void demoShow() {
   gfxFillRect(462, 400, 100, 60, COLOR_GREEN);
   gfxFillRect(562, 400, 100, 60, COLOR_BLUE);
 
+  gfxFillRect(0, BALL_Y, LCD_WIDTH, BALL_SIZE, COLOR_BG);
   ball_x = -BALL_SIZE;  // hors écran : rien à effacer à la première image
   frames = 0;
   last_report = millis();
