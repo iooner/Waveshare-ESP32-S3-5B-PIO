@@ -1,5 +1,6 @@
 #include "brightness.h"
 #include <Preferences.h>
+#include <esp_sleep.h>
 #include "astro.h"
 #include "board.h"
 #include "gfx.h"
@@ -9,9 +10,14 @@
 #define TWILIGHT_DEG  6.0f   // fondu entre 6° sous l'horizon (fin du crépuscule civil) et 6° au-dessus
 #define UPDATE_MS     10000  // le soleil monte d'un degré en 6 minutes au plus vite
 
+// Veille profonde : temps pendant lequel la carte reste joignable avant de s'endormir
+#define GRACE_MS      (5UL * 60 * 1000)  // après un reset ou une mise sous tension : de quoi changer le réglage
+#define RECHECK_MS    30000              // après un réveil par l'horloge : de quoi recevoir l'heure exacte
+#define MIN_SLEEP_S   60                 // en dessous, s'endormir ne vaut pas le redémarrage
+
 // Lus par la boucle d'affichage, écrits par le back office depuis une autre tâche. Des valeurs
 // sans lien entre elles : au pire, un mélange d'ancien et de nouveau pendant une image.
-static BrightnessSettings settings = {10, 2, false, false, false, 23 * 60, 7 * 60};
+static BrightnessSettings settings = {10, 2, false, false, false, 23 * 60, 7 * 60, false};
 static volatile bool refresh = true;  // réglages changés : à appliquer sans attendre
 static int16_t applied = -1;          // luminosité en place
 
@@ -36,6 +42,27 @@ static bool asleep(const BrightnessSettings &s) {
   return minute >= s.sleep_from || minute < s.sleep_to;
 }
 
+// Met la carte en veille profonde jusqu'à la fin de la plage d'extinction, si c'est demandé et
+// que c'est le moment. Elle redémarre au réveil.
+static void deepSleepIfDue(const BrightnessSettings &s) {
+  if (!s.deep || !asleep(s)) return;
+  bool by_timer = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+  if (millis() < (by_timer ? RECHECK_MS : GRACE_MS)) return;
+
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  int32_t seconds = (s.sleep_to - (t.tm_hour * 60 + t.tm_min) + 24 * 60) % (24 * 60) * 60 - t.tm_sec;
+  if (seconds < MIN_SLEEP_S) return;
+  // L'horloge de veille dérive de quelques pour cent : on se réveille un peu en avance, l'heure
+  // exacte est reçue du réseau, puis la carte se rendort pour le reste
+  seconds -= seconds / 25;
+  Serial.printf("Veille profonde pendant %ld s\n", (long)seconds);
+  backlightSet(0);
+  esp_sleep_enable_timer_wakeup((uint64_t)seconds * 1000000);
+  esp_deep_sleep_start();
+}
+
 void brightnessBegin() {
   Preferences prefs;
   prefs.begin("ecran");
@@ -46,6 +73,7 @@ void brightnessBegin() {
   settings.sleep = prefs.getBool("veille", settings.sleep);
   settings.sleep_from = prefs.getUShort("debut", settings.sleep_from);
   settings.sleep_to = prefs.getUShort("fin", settings.sleep_to);
+  settings.deep = prefs.getBool("profonde", settings.deep);
   prefs.end();
   brightnessLoop();
 }
@@ -56,6 +84,7 @@ void brightnessLoop() {
   refresh = false;
   last = millis();
   BrightnessSettings s = settings;
+  deepSleepIfDue(s);
   float day = s.automatic || s.red ? daylight() : 1;
   // La page se redessine d'elle-même quand la teinte change (plugin.cpp)
   gfxSetNight(s.red ? lroundf((1 - day) * GFX_NIGHT_MAX) : 0);
@@ -83,7 +112,7 @@ void brightnessConfigure(const BrightnessSettings &s) {
   n.sleep_to = min<uint16_t>(s.sleep_to, 24 * 60 - 1);
   const BrightnessSettings &o = settings;
   if (n.day == o.day && n.night == o.night && n.automatic == o.automatic && n.red == o.red && n.sleep == o.sleep &&
-      n.sleep_from == o.sleep_from && n.sleep_to == o.sleep_to) {
+      n.sleep_from == o.sleep_from && n.sleep_to == o.sleep_to && n.deep == o.deep) {
     return;
   }
   settings = n;
@@ -98,5 +127,6 @@ void brightnessConfigure(const BrightnessSettings &s) {
   prefs.putBool("veille", n.sleep);
   prefs.putUShort("debut", n.sleep_from);
   prefs.putUShort("fin", n.sleep_to);
+  prefs.putBool("profonde", n.deep);
   prefs.end();
 }

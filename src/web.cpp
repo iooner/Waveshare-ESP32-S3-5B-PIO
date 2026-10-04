@@ -40,7 +40,7 @@ static const char PAGE_ROW[] = "<label>%c%s<input type=checkbox name=p%u%s></lab
 
 // Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
 // ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
-// et minutes d'extinction puis de rallumage, latitude, longitude
+// et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude
 static const char SETTINGS[] =
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
@@ -53,10 +53,13 @@ static const char SETTINGS[] =
     "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label>"
     "<label>Extinction programmée<input type=checkbox name=veille%s></label>"
     "<label>Éteindre à<input type=time name=debut value=%02u:%02u></label>"
-    "<label>Rallumer à<input type=time name=fin value=%02u:%02u></label></section>"
+    "<label>Rallumer à<input type=time name=fin value=%02u:%02u></label>"
+    "<label>Veille profonde pendant l'extinction<input type=checkbox name=profonde%s></label></section>"
     "<p>Le cycle passe du niveau de jour au niveau de nuit quand le soleil se couche. Sans lui, seul le niveau de "
     "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle. L'extinction programmée éteint "
     "tout à fait l'écran entre les deux heures, chaque jour."
+    "<p>En veille profonde, la carte s'arrête aussi pour consommer moins : cette page ne répond plus jusqu'à l'heure "
+    "du rallumage. Pour la joindre avant, appuyer sur son bouton reset : elle reste éveillée 5 minutes."
     "<h2>Lieu de la météo et de l'heure</h2><section>"
     "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
     "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
@@ -65,12 +68,12 @@ static const char SETTINGS[] =
     "<h2>Mise à jour du firmware</h2><section><div><input type=file id=f accept=.bin></div>"
     "<div><button type=button onclick=u()>Envoyer</button><span id=m></span></div></section>";
 
-// Arguments : heure locale, soleil et lune, heures et minutes de fonctionnement, signal Wi-Fi,
+// Arguments : heure locale, soleil et lune, heures et minutes de fonctionnement, cause du démarrage, signal Wi-Fi,
 // RAM interne libre et son minimum, images ratées, luminosité, teinte de nuit, météo, partition,
 // marge des piles web, météo et Sonos
 static const char STATE[] =
     "<h2>État</h2><section><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
-    "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Wi-Fi<b>%d dBm</b></div>"
+    "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div>"
     "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
     "<div>Marge des piles<b>web %u, météo %u, Sonos %u</b></div></section>";
@@ -166,6 +169,7 @@ static void apply(const char *query) {
   int from = minuteOfDay(param(query, "debut")), to = minuteOfDay(param(query, "fin"));
   if (from >= 0) b.sleep_from = from;
   if (to >= 0) b.sleep_to = to;
+  b.deep = param(query, "profonde") != nullptr;
   brightnessConfigure(b);
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
@@ -193,7 +197,8 @@ static void sendPage(WiFiClient &c) {
   astroSettings(sky);
   add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
       b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", b.sleep ? " checked" : "",
-      b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, s.latitude, s.longitude);
+      b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, b.deep ? " checked" : "", s.latitude,
+      s.longitude);
 
   char weather[40];
   int32_t age = weatherAge();
@@ -218,7 +223,19 @@ static void sendPage(WiFiClient &c) {
     snprintf(sun, sizeof(sun), "%02d:%02d à %02d:%02d, phase %u/8", r.tm_hour, r.tm_min, e.tm_hour, e.tm_min,
              moonPhase(now));
   }
-  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, (int)WiFi.RSSI(),
+  const char *boot;
+  switch (esp_reset_reason()) {
+    case ESP_RST_DEEPSLEEP: boot = "réveil programmé"; break;
+    case ESP_RST_POWERON: boot = "mise sous tension ou reset"; break;
+    case ESP_RST_SW: boot = "redémarrage demandé"; break;
+    case ESP_RST_PANIC: boot = "plantage"; break;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: boot = "chien de garde"; break;
+    case ESP_RST_BROWNOUT: boot = "baisse de tension"; break;
+    default: boot = "autre"; break;
+  }
+  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, boot, (int)WiFi.RSSI(),
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, esp_ota_get_running_partition()->label, stackMargin("web"),
