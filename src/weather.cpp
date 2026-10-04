@@ -1,6 +1,7 @@
 #include "weather.h"
 #include <Preferences.h>
 #include <WiFi.h>
+#include <freertos/idf_additions.h>
 #include "secrets.h"
 
 // Lieu des prévisions tant qu'aucun n'a été choisi dans le back office. A défaut : Bruxelles.
@@ -139,7 +140,9 @@ void weatherBegin() {
   settings.longitude = prefs.getFloat("lon", settings.longitude);
   prefs.end();
   resp = (char *)heap_caps_malloc(RESP_SIZE, MALLOC_CAP_SPIRAM);
-  if (resp) xTaskCreatePinnedToCore(weatherTask, "meteo", 5120, nullptr, 1, &task, 0);
+  // Pile en PSRAM, pour garder la RAM interne à l'écran : permis parce que la tâche n'écrit jamais en
+  // flash (les réglages sont enregistrés par la tâche qui appelle weatherConfigure())
+  if (resp) xTaskCreatePinnedToCoreWithCaps(weatherTask, "meteo", 5120, nullptr, 1, &task, 0, MALLOC_CAP_SPIRAM);
 }
 
 uint32_t weatherGet(Weather &out) {
