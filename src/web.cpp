@@ -4,60 +4,87 @@
 #include <esp_ota_ops.h>
 #include "astro.h"
 #include "brightness.h"
+#include "gfx.h"
 #include "lcd.h"
 #include "plugin.h"
 #include "weather.h"
 
-#define BUF_SIZE           4096  // une requête de navigateur fait moins de 1 Ko, la page ~3 Ko
-#define HTTP_TIMEOUT_MS    1000
+#define BUF_SIZE           6144  // une requête de navigateur fait moins de 1 Ko, la page ~4,5 Ko
+#define HTTP_TIMEOUT_MS    1500  // pour recevoir une requête entière
+#define IDLE_TIMEOUT_MS    600   // pour en recevoir le début
 #define UPDATE_TIMEOUT_MS  10000  // silence maximal pendant l'envoi d'un firmware
 
 static char *req, *page;  // requête reçue et page envoyée, en PSRAM
 static size_t page_len;
 static volatile bool updating = false;
 
+// La page ressemble à un écran de réglages : des sections arrondies, une ligne par réglage, le
+// libellé à gauche et la commande à droite. Chaque case ou curseur est enregistré dès qu'il
+// change (voir SCRIPT) ; seul le lieu attend son bouton.
 static const char HEAD[] =
     "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>Écran</title><style>body{font:18px system-ui;max-width:24em;margin:2em auto;padding:0 1em;"
-    "background:#111;color:#eee}label{display:block;margin:.7em 0}input[type=range]{width:14em;vertical-align:middle}"
-    "input:not([type=checkbox]),button{font:inherit;padding:.3em .6em;margin:.2em .3em .2em 0}"
-    "small{color:#999}</style><h1>Écran</h1><form action=/set><h2>Plugins</h2>";
+    "<title>Écran</title><style>body{font:17px system-ui;max-width:26em;margin:0 auto;padding:1em;background:#000;"
+    "color:#eee}h1{font-size:1.5em;margin:.4em .6em}h2{font:600 .8em system-ui;color:#999;text-transform:uppercase;"
+    "margin:1.8em 1.2em .5em}section{background:#1c1c1e;border-radius:12px;padding:0 1em}"
+    "section>*{display:flex;align-items:center;gap:.7em;min-height:2.9em;border-top:1px solid #333}"
+    "section>:first-child{border:0}input[type=checkbox]{width:1.3em;height:1.3em;margin-left:auto;accent-color:#30d158}"
+    "input[type=range]{flex:1;min-width:0;accent-color:#0a84ff}input:not([type]),button{font:inherit;color:#fff;"
+    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}"
+    "button{background:#0a84ff}#r{flex-wrap:wrap;padding:.5em 0}#r:empty{display:none}#r button{background:#2c2c2e}"
+    "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
+    "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}</style>"
+    "<h1>Écran <small id=ok></small></h1><form><h2>Affichage</h2><section>";
+
+// Une page activable. Arguments : nom (initiale, suite), rang, cochée ou non
+static const char PAGE_ROW[] = "<label>%c%s<input type=checkbox name=p%u%s></label>";
 
 // Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
 // ou non, luminosité de nuit (deux fois), rouge coché ou non, latitude, longitude
 static const char SETTINGS[] =
-    "<label><input type=checkbox name=meteo%s> Météo</label>"
-    "<label><input type=checkbox name=soleil%s> Soleil : lever et coucher</label>"
-    "<label><input type=checkbox name=lune%s> Lune : phase</label><small>L'horloge reste toujours active.</small>"
-    // Lâcher un curseur enregistre tout de suite, pour voir le résultat sur l'écran
-    "<h2>Luminosité</h2><label><input type=range name=jour min=1 max=100 value=%u onchange=form.submit() "
-    "oninput=nextElementSibling.textContent=value> <span>%u</span> %%</label>"
-    "<label><input type=checkbox name=auto%s> Cycle automatique : baisse quand le soleil se couche</label>"
-    "<label>La nuit <input type=range name=nuit min=0 max=100 value=%u onchange=form.submit() "
-    "oninput=nextElementSibling.textContent=value> <span>%u</span> %%</label>"
-    "<label><input type=checkbox name=rouge%s> Rouge la nuit : les couleurs virent au rouge sombre quand le soleil "
-    "se couche</label>"
-    "<h2>Lieu de la météo</h2><input id=q placeholder='Chercher une ville'> <button type=button onclick=s()>"
-    "Chercher</button><div id=r></div><label>Latitude <input id=lat name=lat value=%.4f></label>"
-    "<label>Longitude <input id=lon name=lon value=%.4f></label><p><button>Enregistrer</button></form>"
-    "<h2>Mise à jour</h2><input type=file id=f accept=.bin> <button type=button onclick=u()>Envoyer</button> "
-    "<span id=m></span>";
+    "<label>Météo<input type=checkbox name=meteo%s></label>"
+    "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
+    "<label>Phase de la lune<input type=checkbox name=lune%s></label></section>"
+    "<p>L'horloge reste toujours affichée."
+    "<h2>Luminosité</h2><section>"
+    "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
+    "<label>Cycle automatique<input type=checkbox name=auto%s></label>"
+    "<label>Nuit<input type=range name=nuit min=0 max=100 value=%u><b>%u %%</b></label>"
+    "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label></section>"
+    "<p>Le cycle passe du niveau de jour au niveau de nuit quand le soleil se couche. Sans lui, seul le niveau de "
+    "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle."
+    "<h2>Lieu de la météo et de l'heure</h2><section>"
+    "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
+    "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
+    "<label>Longitude<input id=lon name=lon value=%.4f></label>"
+    "<div><button>Enregistrer le lieu</button></div></section></form>"
+    "<h2>Mise à jour du firmware</h2><section><div><input type=file id=f accept=.bin></div>"
+    "<div><button type=button onclick=u()>Envoyer</button><span id=m></span></div></section>";
 
-// Arguments : heure locale, soleil, heures et minutes de fonctionnement, signal Wi-Fi, RAM interne libre et son minimum,
-// images ratées, luminosité, météo, partition, marge des piles web, météo et Sonos
+// Arguments : heure locale, soleil et lune, heures et minutes de fonctionnement, signal Wi-Fi,
+// RAM interne libre et son minimum, images ratées, luminosité, teinte de nuit, météo, partition,
+// marge des piles web, météo et Sonos
 static const char STATE[] =
-    "<h2>État</h2><p>Heure locale : %02d:%02d<br>%sAllumé depuis %lu h %02lu min<br>Wi-Fi : %d dBm<br>RAM interne libre : %u Ko (au plus bas %u Ko)"
-    "<br>Images ratées depuis le démarrage : %lu<br>Luminosité : %u %%<br>Météo : %s<br>Firmware dans la partition %s"
-    "<br>Marge des piles : web %u, météo %u, Sonos %u octets";
+    "<h2>État</h2><section><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
+    "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Wi-Fi<b>%d dBm</b></div>"
+    "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div>"
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Marge des piles<b>web %u, météo %u, Sonos %u</b></div></section>";
 
 static const char SCRIPT[] =
-    // La recherche de ville part du navigateur, pas de la carte : elle remplit latitude et longitude
-    "<script>q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
+    "<script>let F=document.forms[0];"
+    // Tout réglage part dès qu'il change, sans recharger la page. Le lieu attend son bouton : ses
+    // deux champs n'ont de sens qu'ensemble.
+    "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
+    "ok.textContent=a.ok?'enregistré':'refusé'}catch(e){ok.textContent='carte injoignable'}}"
+    "F.onchange=e=>{if(e.target.type!='text')save()};F.onsubmit=e=>{e.preventDefault();save()};"
+    "F.oninput=e=>{if(e.target.type=='range')e.target.nextElementSibling.textContent=e.target.value+' %'};"
+    // La recherche de ville part du navigateur, pas de la carte ; choisir une ville l'enregistre
+    "q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
     "try{let j=await(await fetch('https://geocoding-api.open-meteo.com/v1/search?count=5&language=fr&name='+"
     "encodeURIComponent(q.value))).json();r.textContent=j.results?'':'Aucune ville trouvée';"
     "(j.results||[]).forEach(c=>{let b=document.createElement('button');b.type='button';"
     "b.textContent=[c.name,c.admin1,c.country_code].filter(x=>x).join(', ');"
-    "b.onclick=()=>{lat.value=c.latitude;lon.value=c.longitude};r.append(b)})}"
+    "b.onclick=()=>{lat.value=c.latitude;lon.value=c.longitude;r.textContent='';save()};r.append(b)})}"
     "catch(e){r.textContent='Recherche impossible'}}"
     // Le firmware part tel quel dans le corps de la requête ; la page se recharge après le redémarrage
     "function u(){if(!f.files[0])return;let x=new XMLHttpRequest();x.open('POST','/update');"
@@ -89,7 +116,8 @@ static const char *param(const char *query, const char *name) {
   return nullptr;
 }
 
-// Une case décochée n'est pas envoyée par le navigateur : paramètre absent = désactivé
+// La page envoie tous ses réglages à chaque fois. Une case décochée n'est pas envoyée : paramètre
+// absent = désactivé.
 static void apply(const char *query) {
   for (uint8_t i = 0; i + 1 < pluginCount(); i++) {
     char name[8];
@@ -132,8 +160,7 @@ static void sendPage(WiFiClient &c) {
   // La dernière page est celle par défaut : elle ne se désactive pas
   for (uint8_t i = 0; i + 1 < pluginCount(); i++) {
     const char *name = pluginName(i);
-    add("<label><input type=checkbox name=p%u%s> %c%s</label>", i, pluginEnabled(i) ? " checked" : "",
-        toupper(name[0]), name + 1);
+    add(PAGE_ROW, toupper(name[0]), name + 1, i, pluginEnabled(i) ? " checked" : "");
   }
   WeatherSettings s;
   weatherSettings(s);
@@ -154,7 +181,7 @@ static void sendPage(WiFiClient &c) {
   struct tm t;
   localtime_r(&now, &t);
   // Soleil du jour et lune, tels que la carte les calcule
-  char sun[80] = "";
+  char sun[80] = "ni lever ni coucher";
   struct tm noon = t;
   noon.tm_hour = 12;
   noon.tm_min = noon.tm_sec = 0;
@@ -164,16 +191,19 @@ static void sendPage(WiFiClient &c) {
     rise += 30, set += 30;
     localtime_r(&rise, &r);
     localtime_r(&set, &e);
-    snprintf(sun, sizeof(sun), "Soleil : %02d:%02d à %02d:%02d, lune en phase %u sur 8<br>", r.tm_hour, r.tm_min, e.tm_hour,
-             e.tm_min, moonPhase(now));
+    snprintf(sun, sizeof(sun), "%02d:%02d à %02d:%02d, phase %u/8", r.tm_hour, r.tm_min, e.tm_hour, e.tm_min,
+             moonPhase(now));
   }
-  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, (int)WiFi.RSSI(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, (int)WiFi.RSSI(),
+      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
-      brightnessCurrent(), weather, esp_ota_get_running_partition()->label, stackMargin("web"), stackMargin("meteo"),
-      stackMargin("sonos"));
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, esp_ota_get_running_partition()->label, stackMargin("web"),
+      stackMargin("meteo"), stackMargin("sonos"));
   add("%s", SCRIPT);
 
-  c.printf("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %u\r\nConnection: close\r\n\r\n",
+  // Jamais gardée en cache par le navigateur : elle doit montrer les réglages du moment
+  c.printf("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+           "Content-Length: %u\r\nConnection: close\r\n\r\n",
            (unsigned)page_len);
   c.write((const uint8_t *)page, page_len);
 }
@@ -227,19 +257,27 @@ static void handle(WiFiClient &c) {
   size_t len = 0;
   uint32_t t0 = millis();
   req[0] = 0;
-  while (len < BUF_SIZE - 1 && millis() - t0 < HTTP_TIMEOUT_MS && c.connected() && !strstr(req, "\r\n\r\n")) {
+  while (len < BUF_SIZE - 1 && millis() - t0 < (len ? HTTP_TIMEOUT_MS : IDLE_TIMEOUT_MS) && c.connected() &&
+         !strstr(req, "\r\n\r\n")) {
     int got = c.read((uint8_t *)req + len, BUF_SIZE - 1 - len);
     if (got > 0) len += got;
     else delay(2);
     req[len] = 0;
   }
   char *end = strstr(req, " HTTP/"), *body = strstr(req, "\r\n\r\n");
-  if (end) *end = 0;
+  // Les navigateurs ouvrent des connexions d'avance, sans rien y envoyer. On les referme sans
+  // répondre : une réponse y resterait en attente, et le navigateur la prendrait pour celle de la
+  // requête qu'il finit par y envoyer. Fermée, il en ouvre simplement une autre.
+  if (!end || !body) {
+    c.stop();
+    return;
+  }
+  *end = 0;
 
   if (end && strncmp(req, "GET /set", 8) == 0) {
     apply(req + 7);
-    // Retour à la page : la recharger ne renvoie pas les réglages une seconde fois
-    c.print("HTTP/1.1 303 See Other\r\nLocation: /\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    // La page envoie les réglages sans se recharger : rien à lui répondre
+    c.print("HTTP/1.1 204 No Content\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
   } else if (end && strcmp(req, "GET /") == 0) {
     sendPage(c);
   } else if (end && body && strcmp(req, "POST /update") == 0) {
