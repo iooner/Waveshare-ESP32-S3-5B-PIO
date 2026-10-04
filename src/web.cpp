@@ -2,6 +2,7 @@
 #include <Update.h>
 #include <WiFi.h>
 #include <esp_ota_ops.h>
+#include "astro.h"
 #include "brightness.h"
 #include "lcd.h"
 #include "plugin.h"
@@ -20,12 +21,14 @@ static const char HEAD[] =
     "<title>Écran</title><style>body{font:18px system-ui;max-width:24em;margin:2em auto;padding:0 1em;"
     "background:#111;color:#eee}label{display:block;margin:.7em 0}input[type=range]{width:14em;vertical-align:middle}"
     "input:not([type=checkbox]),button{font:inherit;padding:.3em .6em;margin:.2em .3em .2em 0}"
-    "small{color:#999}</style><h1>Écran</h1><form action=/set><h2>Pages</h2>";
+    "small{color:#999}</style><h1>Écran</h1><form action=/set><h2>Plugins</h2>";
 
-// Arguments : météo cochée ou non, luminosité de jour (deux fois), cycle coché ou non,
-// luminosité de nuit (deux fois), latitude, longitude
+// Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
+// ou non, luminosité de nuit (deux fois), latitude, longitude
 static const char SETTINGS[] =
-    "<label><input type=checkbox name=meteo%s> Météo</label><small>L'horloge reste toujours active.</small>"
+    "<label><input type=checkbox name=meteo%s> Météo</label>"
+    "<label><input type=checkbox name=soleil%s> Soleil : lever et coucher</label>"
+    "<label><input type=checkbox name=lune%s> Lune : phase</label><small>L'horloge reste toujours active.</small>"
     // Lâcher un curseur enregistre tout de suite, pour voir le résultat sur l'écran
     "<h2>Luminosité</h2><label><input type=range name=jour min=1 max=100 value=%u onchange=form.submit() "
     "oninput=nextElementSibling.textContent=value> <span>%u</span> %%</label>"
@@ -38,10 +41,10 @@ static const char SETTINGS[] =
     "<h2>Mise à jour</h2><input type=file id=f accept=.bin> <button type=button onclick=u()>Envoyer</button> "
     "<span id=m></span>";
 
-// Arguments : heure locale, heures et minutes de fonctionnement, signal Wi-Fi, RAM interne libre et son minimum,
+// Arguments : heure locale, soleil, heures et minutes de fonctionnement, signal Wi-Fi, RAM interne libre et son minimum,
 // images ratées, luminosité, météo, partition, marge des piles web, météo et Sonos
 static const char STATE[] =
-    "<h2>État</h2><p>Heure locale : %02d:%02d<br>Allumé depuis %lu h %02lu min<br>Wi-Fi : %d dBm<br>RAM interne libre : %u Ko (au plus bas %u Ko)"
+    "<h2>État</h2><p>Heure locale : %02d:%02d<br>%sAllumé depuis %lu h %02lu min<br>Wi-Fi : %d dBm<br>RAM interne libre : %u Ko (au plus bas %u Ko)"
     "<br>Images ratées depuis le démarrage : %lu<br>Luminosité : %u %%<br>Météo : %s<br>Firmware dans la partition %s"
     "<br>Marge des piles : web %u, météo %u, Sonos %u octets";
 
@@ -110,6 +113,8 @@ static void apply(const char *query) {
   if (night) b.night = constrain(atoi(night), 0, 100);
   b.automatic = param(query, "auto") != nullptr;
   brightnessConfigure(b);
+
+  astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
 }
 
 // Octets de pile qu'une tâche n'a jamais utilisés, 0 si elle n'existe pas
@@ -131,7 +136,9 @@ static void sendPage(WiFiClient &c) {
   weatherSettings(s);
   BrightnessSettings b;
   brightnessSettings(b);
-  add(SETTINGS, s.enabled ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night, s.latitude,
+  AstroSettings sky;
+  astroSettings(sky);
+  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night, s.latitude,
       s.longitude);
 
   char weather[40];
@@ -143,7 +150,21 @@ static void sendPage(WiFiClient &c) {
   time_t now = time(nullptr);
   struct tm t;
   localtime_r(&now, &t);
-  add(STATE, t.tm_hour, t.tm_min, minutes / 60, minutes % 60, (int)WiFi.RSSI(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+  // Soleil du jour et lune, tels que la carte les calcule
+  char sun[80] = "";
+  struct tm noon = t;
+  noon.tm_hour = 12;
+  noon.tm_min = noon.tm_sec = 0;
+  time_t rise, set;
+  if (sunTimes(mktime(&noon), s.latitude, s.longitude, rise, set) == SUN_RISES) {
+    struct tm r, e;
+    rise += 30, set += 30;
+    localtime_r(&rise, &r);
+    localtime_r(&set, &e);
+    snprintf(sun, sizeof(sun), "Soleil : %02d:%02d à %02d:%02d, lune en phase %u sur 8<br>", r.tm_hour, r.tm_min, e.tm_hour,
+             e.tm_min, moonPhase(now));
+  }
+  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, (int)WiFi.RSSI(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       brightnessCurrent(), weather, esp_ota_get_running_partition()->label, stackMargin("web"), stackMargin("meteo"),
       stackMargin("sonos"));

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "astro.h"
 #include "board.h"
 #include "brightness.h"
 #include "lcd.h"
@@ -26,6 +27,7 @@ void setup() {
   if (!lcdBegin()) Serial.println("Echec init LCD");
 
   netBegin();
+  astroBegin();
   pluginsBegin(&clock_bar_plugin, pages, sizeof(pages) / sizeof(pages[0]));
   lcdPresent();
   webBegin();

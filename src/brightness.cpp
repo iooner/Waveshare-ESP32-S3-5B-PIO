@@ -1,5 +1,6 @@
 #include "brightness.h"
 #include <Preferences.h>
+#include "astro.h"
 #include "board.h"
 #include "net.h"
 #include "weather.h"
@@ -12,21 +13,6 @@
 static BrightnessSettings settings = {10, 2, false};
 static volatile bool refresh = true;  // réglages changés : à appliquer sans attendre
 static int16_t applied = -1;          // luminosité en place
-
-// Hauteur du soleil au-dessus de l'horizon, en degrés. Formules de position du soleil à
-// l'ordre le plus bas (anomalie moyenne, équation du centre, temps sidéral) : justes à une
-// fraction de degré, bien assez pour un fondu.
-static float sunElevation(time_t t, float latitude, float longitude) {
-  const double RAD = M_PI / 180, TILT = 23.4397 * RAD;  // inclinaison de l'axe de la Terre
-  double days = t / 86400.0 - 10957.5;                  // depuis le 1er janvier 2000 à midi UTC
-  double anomaly = (357.5291 + 0.98560028 * days) * RAD;
-  double lon = anomaly + (1.9148 * sin(anomaly) + 0.02 * sin(2 * anomaly) + 282.9372) * RAD;  // longitude écliptique
-  double declination = asin(sin(lon) * sin(TILT));
-  double ascension = atan2(sin(lon) * cos(TILT), cos(lon));
-  double hour_angle = (280.147 + 360.9856235 * days + longitude) * RAD - ascension;
-  double lat = latitude * RAD;
-  return asin(sin(lat) * sin(declination) + cos(lat) * cos(declination) * cos(hour_angle)) / RAD;
-}
 
 static uint8_t wanted() {
   BrightnessSettings s = settings;

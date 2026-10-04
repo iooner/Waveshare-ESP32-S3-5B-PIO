@@ -52,7 +52,7 @@ static uint8_t dirty_count = 0;
 // qui dessine dans les 32 pixels de chaque bord est lue en PSRAM.
 #define CELL_X0        32
 #define ROW_CELLS      ((LCD_WIDTH - 2 * CELL_X0) / CELL_PX)
-#define CELL_COUNT     3400  // cases disponibles (32 octets chacune)
+#define CELL_COUNT     3600  // cases disponibles (32 octets chacune)
 #define HEAD_COUNT     512   // lignes compactes disponibles (62 octets d'en-tête chacune)
 #define NONE           0xFFFF
 #define RAW_NARROW_PX  128   // contenu assez étroit pour être lu en PSRAM sans risque

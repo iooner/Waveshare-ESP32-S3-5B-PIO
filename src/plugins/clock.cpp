@@ -1,7 +1,8 @@
 // Horloge, sous deux formes : la barre du haut (date à gauche, heure à droite) et la page
 // plein écran (heure et date en grand, météo en dessous). L'heure vient du réseau (net.h), la
-// météo de weather.h.
+// météo de weather.h, le soleil et la lune d'astro.h.
 #include <time.h>
+#include "astro.h"
 #include "fonts/font_clock.h"
 #include "fonts/font_sans32.h"
 #include "fonts/font_sans40.h"
@@ -67,7 +68,7 @@ static void barShow() {
 #define WX_COLS     7
 #define WX_COL_W    128
 #define WX_X        ((LCD_WIDTH - WX_COLS * WX_COL_W) / 2)
-#define WX_ALERT_Y  300  // annonce de pluie, sur toute la largeur
+#define WX_INFO_Y   300  // sur toute la largeur : annonce de pluie, sinon soleil et lune
 #define WX_LABEL_Y  348
 #define WX_ICON_Y   398
 #define WX_TEMP_Y   466
@@ -78,7 +79,7 @@ static void barShow() {
 
 static uint32_t shown_weather;  // version de la météo affichée, 0 = rien
 static time_t shown_hour;       // première heure de prévision affichée
-static char shown_alert[40];    // annonce de pluie affichée
+static char shown_info[96];     // ligne d'information affichée
 
 // Caractère de font_weather64 pour un code météo WMO
 static char weatherIcon(uint8_t code, bool day) {
@@ -142,18 +143,64 @@ static void rainAlert(const Weather &w, time_t now, char *out, size_t cap) {
   }
 }
 
+static const char *const MOON[] = {"Nouvelle lune",           "Lune : premier croissant", "Lune : premier quartier",
+                                   "Lune gibbeuse croissante", "Pleine lune",              "Lune gibbeuse décroissante",
+                                   "Lune : dernier quartier",  "Lune : dernier croissant"};
+
+// Lever et coucher du soleil du jour et phase de la lune, selon ce qui est activé dans le back
+// office. Vide si rien ne l'est, ou tant que l'heure n'est pas reçue.
+static void almanac(time_t now, char *out, size_t cap) {
+  out[0] = 0;
+  if (!netTimeSynced()) return;
+  AstroSettings shown;
+  astroSettings(shown);
+  if (shown.sun) {
+    WeatherSettings place;
+    weatherSettings(place);
+    struct tm noon;
+    localtime_r(&now, &noon);
+    noon.tm_hour = 12;
+    noon.tm_min = noon.tm_sec = 0;
+    noon.tm_isdst = -1;
+    time_t rise, set;
+    SunDay day = sunTimes(mktime(&noon), place.latitude, place.longitude, rise, set);
+    if (day == SUN_RISES) {
+      struct tm r, s;
+      rise += 30, set += 30;  // à la minute la plus proche
+      localtime_r(&rise, &r);
+      localtime_r(&set, &s);
+      snprintf(out, cap, "Lever %d h %02d · Coucher %d h %02d", r.tm_hour, r.tm_min, s.tm_hour, s.tm_min);
+    } else {
+      strlcpy(out, day == SUN_ALWAYS_UP ? "Soleil de minuit" : "Nuit polaire", cap);
+    }
+  }
+  if (shown.moon) {
+    if (out[0]) strlcat(out, " · ", cap);
+    strlcat(out, MOON[moonPhase(now)], cap);
+  }
+}
+
+// Ligne d'information : l'annonce de pluie quand il y en a une, sinon le soleil et la lune
+static void infoUpdate(const Weather &w, time_t now) {
+  static char sky[sizeof(shown_info)];  // refait une fois par seconde : le calcul ne vaut pas chaque image
+  static time_t sky_at = -1;
+  if (now != sky_at) almanac(now, sky, sizeof(sky));
+  sky_at = now;
+
+  char alert[40];
+  rainAlert(w, now, alert, sizeof(alert));
+  const char *info = alert[0] ? alert : sky;
+  if (strcmp(info, shown_info) == 0) return;
+  gfxTextBox(MARGIN_X, WX_INFO_Y, CONTENT_W, info, font_sans32, alert[0] ? COLOR_RAIN : COLOR_DIM, COLOR_BG, GFX_CENTER);
+  strlcpy(shown_info, info, sizeof(shown_info));
+}
+
 static void weatherUpdate() {
   Weather w;
   uint32_t version = weatherGet(w);
   if (!version) w.hour_count = w.quarter_count = 0;
   time_t secs = time(nullptr);
-
-  char alert[sizeof(shown_alert)];
-  rainAlert(w, secs, alert, sizeof(alert));
-  if (strcmp(alert, shown_alert) != 0) {
-    gfxTextBox(MARGIN_X, WX_ALERT_Y, CONTENT_W, alert, font_sans32, COLOR_RAIN, COLOR_BG, GFX_CENTER);
-    strlcpy(shown_alert, alert, sizeof(shown_alert));
-  }
+  infoUpdate(w, secs);
 
   // Les prévisions commencent à la prochaine heure : la bande avance d'une colonne quand
   // l'heure change, sans attendre la lecture suivante
@@ -208,7 +255,7 @@ static void bigUpdate() {
 static void bigShow() {
   memset(shown_time, 0, sizeof(shown_time));
   shown_date[0] = 1;
-  shown_weather = shown_hour = shown_alert[0] = 0;  // la page vient d'être effacée
+  shown_weather = shown_hour = shown_info[0] = 0;  // la page vient d'être effacée
   bigUpdate();
 }
 

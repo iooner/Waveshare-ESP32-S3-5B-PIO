@@ -54,8 +54,10 @@ Rien n'est copié tel quel de ces projets, mais le code s'appuie dessus.
   communautaire du protocole UPnP des enceintes Sonos, consultée pour `src/sonos.cpp`.
 - **Algorithme de Bresenham** : tracé de lignes de `gfxLine()`.
 - **[Astronomy Answers, « Position of the Sun »](https://www.aa.quae.nl/en/reken/zonpositie.html)** (Louis
-  Strous) : formules et constantes de la hauteur du soleil de `src/brightness.cpp`, pour le cycle
-  automatique de luminosité.
+  Strous) : formules et constantes de la hauteur du soleil et de ses heures de lever et de coucher
+  dans `src/astro.cpp` (cycle automatique de luminosité, ligne soleil et lune de la page horloge).
+- **Jean Meeus, *Astronomical Algorithms*** : arguments moyens de la lune et ses principales
+  inégalités, repris à l'ordre le plus bas pour la phase de la lune de `src/astro.cpp`.
 - **Mélange RGB565 en une multiplication** (masque `0x07E0F81F`) : astuce classique, sans auteur
   identifié, utilisée par `blend565()` pour l'antialiasing du texte.
 
