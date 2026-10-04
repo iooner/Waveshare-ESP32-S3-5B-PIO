@@ -38,10 +38,10 @@ static const char SETTINGS[] =
     "<h2>Mise à jour</h2><input type=file id=f accept=.bin> <button type=button onclick=u()>Envoyer</button> "
     "<span id=m></span>";
 
-// Arguments : heures et minutes de fonctionnement, signal Wi-Fi, RAM interne libre et son minimum,
+// Arguments : heure locale, heures et minutes de fonctionnement, signal Wi-Fi, RAM interne libre et son minimum,
 // images ratées, luminosité, météo, partition, marge des piles web, météo et Sonos
 static const char STATE[] =
-    "<h2>État</h2><p>Allumé depuis %lu h %02lu min<br>Wi-Fi : %d dBm<br>RAM interne libre : %u Ko (au plus bas %u Ko)"
+    "<h2>État</h2><p>Heure locale : %02d:%02d<br>Allumé depuis %lu h %02lu min<br>Wi-Fi : %d dBm<br>RAM interne libre : %u Ko (au plus bas %u Ko)"
     "<br>Images ratées depuis le démarrage : %lu<br>Luminosité : %u %%<br>Météo : %s<br>Firmware dans la partition %s"
     "<br>Marge des piles : web %u, météo %u, Sonos %u octets";
 
@@ -140,7 +140,10 @@ static void sendPage(WiFiClient &c) {
   else if (age < 0) strlcpy(weather, "pas encore lue", sizeof(weather));
   else snprintf(weather, sizeof(weather), "lue il y a %ld min", (long)(age / 60));
   unsigned long minutes = esp_timer_get_time() / 60000000;
-  add(STATE, minutes / 60, minutes % 60, (int)WiFi.RSSI(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+  time_t now = time(nullptr);
+  struct tm t;
+  localtime_r(&now, &t);
+  add(STATE, t.tm_hour, t.tm_min, minutes / 60, minutes % 60, (int)WiFi.RSSI(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       brightnessCurrent(), weather, esp_ota_get_running_partition()->label, stackMargin("web"), stackMargin("meteo"),
       stackMargin("sonos"));

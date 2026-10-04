@@ -61,6 +61,7 @@ void loop() {
   pluginsLoop();
   reportLcdHealth();
   brightnessLoop();
+  netLoop();
   // Affiche l'image et attend le rafraîchissement suivant de la dalle
   lcdPresent();
 }

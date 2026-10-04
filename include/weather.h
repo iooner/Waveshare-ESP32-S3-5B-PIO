@@ -1,6 +1,7 @@
 // Météo d'un lieu : temps actuel et prévisions heure par heure, lus chez Open-Meteo (ni compte
 // ni clé). Le lieu se règle dans le back office (web.h) ; au départ, c'est celui de
-// include/secrets.h. Nécessite netBegin().
+// include/secrets.h. La réponse donne aussi le fuseau horaire du lieu : l'heure locale de la
+// carte le suit (net.h). Nécessite netBegin().
 #pragma once
 #include <Arduino.h>
 
@@ -37,7 +38,7 @@ uint32_t weatherGet(Weather &out);
 int32_t weatherAge();
 
 struct WeatherSettings {
-  bool enabled;
+  bool enabled;               // météo affichée ; désactivée, elle reste lue, pour le fuseau horaire
   float latitude, longitude;  // degrés décimaux
 };
 
