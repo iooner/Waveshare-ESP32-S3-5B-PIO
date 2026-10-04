@@ -47,9 +47,13 @@ static uint8_t dirty_count = 0;
 // et x1 son contenu, gardé sous forme compacte (16 couleurs au plus, 4 bits par pixel) quand
 // c'est possible. Sinon cette partie est lue en PSRAM, comme une image.
 #define CELL_PX        64    // une ligne est découpée en cases de 64 pixels ; seules les cases non unies sont gardées
-#define ROW_CELLS      (LCD_WIDTH / CELL_PX)
-#define CELL_COUNT     2800  // cases disponibles (32 octets chacune)
-#define HEAD_COUNT     360   // lignes compactes disponibles (64 octets d'en-tête chacune)
+// Les cases commencent à 32 pixels du bord : un contenu de 64 pixels de large centré sur l'écran
+// (une colonne de pictogrammes) tient alors dans une case au lieu d'en entamer deux. Une ligne
+// qui dessine dans les 32 pixels de chaque bord est lue en PSRAM.
+#define CELL_X0        32
+#define ROW_CELLS      ((LCD_WIDTH - 2 * CELL_X0) / CELL_PX)
+#define CELL_COUNT     3400  // cases disponibles (32 octets chacune)
+#define HEAD_COUNT     512   // lignes compactes disponibles (62 octets d'en-tête chacune)
 #define NONE           0xFFFF
 #define RAW_NARROW_PX  128   // contenu assez étroit pour être lu en PSRAM sans risque
 
@@ -79,7 +83,8 @@ static RowInfo rows[LCD_HEIGHT];      // décrit le framebuffer affiché ; modif
 static RowHead *heads;
 static Cell *cells;
 static uint16_t free_heads[HEAD_COUNT], free_head_count;
-static uint16_t free_cells[CELL_COUNT], free_cell_count;
+static uint16_t *free_cells, free_cell_count;  // en PSRAM, comme old_rows : le balayage ne les lit pas
+static RowInfo *old_rows;                      // lignes remplacées par l'image en cours de présentation
 static RowUpdate staged[LCD_HEIGHT];  // lignes de la prochaine image, appliquées à l'échange
 static volatile uint16_t staged_count = 0;
 static portMUX_TYPE swap_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -87,6 +92,7 @@ static int16_t img_x0, img_x1, img_y0, img_y1;  // zone d'image déclarée par l
 static uint32_t deferred[(LCD_HEIGHT + 31) / 32];  // lignes à redécrire quand des cases se libèrent
 
 static LcdStats stats;
+static uint32_t bad_frames_total = 0;
 static portMUX_TYPE stats_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t grid_base;  // instant de référence de la grille pour l'image en cours
 static bool grid_set = false;
@@ -109,10 +115,14 @@ static inline __attribute__((always_inline)) void unpack(uint16_t *dst, const Ce
   }
 }
 
-static void releaseRow(const RowInfo &r) {
+// Rend à la réserve l'en-tête et les cases d'une ligne, sauf les cases qu'elle partage avec `keep`
+static void releaseRow(const RowInfo &r, const RowInfo &keep) {
   if (r.head == NONE) return;
+  const RowHead &h = heads[r.head];
   for (uint8_t c = 0; c < ROW_CELLS; c++) {
-    if (r.mask >> c & 1) free_cells[free_cell_count++] = heads[r.head].cell[c];
+    if (!(r.mask >> c & 1)) continue;
+    bool shared = keep.head != NONE && (keep.mask >> c & 1) && heads[keep.head].cell[c] == h.cell[c];
+    if (!shared) free_cells[free_cell_count++] = h.cell[c];
   }
   free_heads[free_head_count++] = r.head;
 }
@@ -134,6 +144,7 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
   r.x0 = x0 & ~1;
   r.x1 = (x1 + 1) & ~1;
   if (r.x1 - r.x0 <= RAW_NARROW_PX) return true;
+  if (x0 < CELL_X0 || x1 > LCD_WIDTH - CELL_X0) return true;  // déborde des cases : lue en PSRAM
   if (free_head_count == 0) return false;
 
   RowInfo packed = r;
@@ -143,11 +154,12 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
   uint8_t colors = 1, last_index = 0;
   uint16_t last = bg;
   bool full = false, many = false;
-  for (int c = x0 / CELL_PX; c <= (x1 - 1) / CELL_PX && !full && !many; c++) {
+  const RowInfo &old = rows[y];  // la ligne telle qu'elle est affichée
+  for (int c = (x0 - CELL_X0) / CELL_PX; c <= (x1 - 1 - CELL_X0) / CELL_PX && !full && !many; c++) {
     uint8_t px[CELL_PX / 2];
     bool used = false;
     for (int k = 0; k < CELL_PX && !many; k++) {
-      int x = c * CELL_PX + k;
+      int x = CELL_X0 + c * CELL_PX + k;
       uint16_t col = image(x) ? bg : src[x];
       if (col != last) {
         uint8_t i = 0;
@@ -164,6 +176,17 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
       else px[k / 2] = last_index << 4;
     }
     if (!used || many) continue;
+    // Case identique à celle de la ligne affichée, avec les mêmes couleurs : les deux lignes la
+    // partagent. Un chiffre d'horloge qui change ne prend ainsi que ses propres cases.
+    if (old.head != NONE && (old.mask >> c & 1)) {
+      const RowHead &oh = heads[old.head];
+      if (memcmp(cells[oh.cell[c]].px, px, sizeof(px)) == 0 &&
+          memcmp(oh.palette, h.palette, colors * sizeof(uint16_t)) == 0) {
+        h.cell[c] = oh.cell[c];
+        packed.mask |= 1 << c;
+        continue;
+      }
+    }
     if (free_cell_count == 0) {
       full = true;
       break;
@@ -173,7 +196,7 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
     packed.mask |= 1 << c;
   }
   if (full || many) {
-    releaseRow(packed);
+    releaseRow(packed, old);
     return many;  // trop de couleurs : la ligne sera lue en PSRAM ; réserve vide : à réessayer
   }
   packed.x0 = packed.x1 = 0;
@@ -209,7 +232,7 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
     if (r.head != NONE) {
       const RowHead &h = heads[r.head];
       for (uint32_t c = 0, m = r.mask; m; c++, m >>= 1) {
-        if (m & 1) unpack(out + c * CELL_PX, cells[h.cell[c]], h.palette);
+        if (m & 1) unpack(out + CELL_X0 + c * CELL_PX, cells[h.cell[c]], h.palette);
       }
     } else if (r.x0 != r.x1) {
       memcpy(out + r.x0, fb + y * LCD_WIDTH + r.x0, (r.x1 - r.x0) * sizeof(uint16_t));
@@ -251,7 +274,7 @@ static bool IRAM_ATTR onVsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_ev
   stats.frames++;
   // A la synchro verticale, les deux premiers morceaux de l'image suivante doivent être prêts.
   // Sinon une interruption a été perdue et la fin de l'image est partie décalée.
-  if (last_chunk != 1) stats.bad_frames++;
+  if (last_chunk != 1) stats.bad_frames++, bad_frames_total++;
   return false;
 }
 
@@ -266,6 +289,10 @@ static bool IRAM_ATTR onFrameDone(esp_lcd_panel_handle_t, const esp_lcd_rgb_pane
   BaseType_t woken = pdFALSE;
   xSemaphoreGiveFromISR(frame_sem, &woken);
   return woken == pdTRUE;
+}
+
+uint32_t lcdBadFrames() {
+  return bad_frames_total;
 }
 
 void lcdStats(LcdStats &out) {
@@ -294,7 +321,9 @@ bool lcdBegin() {
   for (RowInfo &r : rows) r = {0, NONE, 0, 0, 0, 0, 0};
   heads = (RowHead *)heap_caps_malloc(HEAD_COUNT * sizeof(RowHead), MALLOC_CAP_INTERNAL);
   cells = (Cell *)heap_caps_malloc(CELL_COUNT * sizeof(Cell), MALLOC_CAP_INTERNAL);
-  if (!heads || !cells) return false;
+  free_cells = (uint16_t *)heap_caps_malloc(CELL_COUNT * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
+  old_rows = (RowInfo *)heap_caps_malloc(LCD_HEIGHT * sizeof(RowInfo), MALLOC_CAP_SPIRAM);
+  if (!heads || !cells || !free_cells || !old_rows) return false;
   for (free_head_count = 0; free_head_count < HEAD_COUNT; free_head_count++) free_heads[free_head_count] = free_head_count;
   for (free_cell_count = 0; free_cell_count < CELL_COUNT; free_cell_count++) free_cells[free_cell_count] = free_cell_count;
 
@@ -393,7 +422,6 @@ void lcdPresent() {
 
   // Lignes à décrire : celles qui viennent d'être modifiées, plus celles restées en attente
   static uint32_t touched[(LCD_HEIGHT + 31) / 32];
-  static RowInfo old_rows[LCD_HEIGHT];
   bool swap = dirty_count > 0, any = swap;
   for (size_t i = 0; i < sizeof(touched) / sizeof(touched[0]); i++) any |= (touched[i] = deferred[i]) != 0;
   if (!any) {
@@ -433,7 +461,10 @@ void lcdPresent() {
     }
   }
   // Les lignes compactes qui ne servent plus retournent dans la réserve
-  for (uint16_t i = 0; i < n; i++) releaseRow(done ? old_rows[i] : staged[i].info);
+  for (uint16_t i = 0; i < n; i++) {
+    if (done) releaseRow(old_rows[i], staged[i].info);
+    else releaseRow(staged[i].info, old_rows[i]);
+  }
   if (!swap) return;
 
   // L'ancien framebuffer affiché devient celui de dessin : on y reporte ce qui vient d'être

@@ -20,7 +20,8 @@ static uint8_t speaker_count = 0;
 static uint8_t active = 0;  // enceinte interrogée en premier : la dernière qui jouait
 static SonosTrack current = {};
 static SemaphoreHandle_t lock;
-static char resp[4096];  // réponse HTTP en cours ; GetPositionInfo fait ~1,5 Ko
+#define RESP_SIZE  4096
+static char *resp;  // réponse HTTP en cours, en PSRAM ; GetPositionInfo fait ~1,5 Ko
 
 // Pochette : deux images en PSRAM, celle qui est publiée et celle en cours de décodage
 #define ART_PX        (SONOS_ART_SIZE * SONOS_ART_SIZE)
@@ -140,8 +141,8 @@ static uint16_t parseTime(const char *s) {
 static size_t readResponse(WiFiClient &c) {
   size_t n = 0;
   uint32_t t0 = millis();
-  while (n < sizeof(resp) - 1 && millis() - t0 < HTTP_TIMEOUT_MS && (c.connected() || c.available())) {
-    int got = c.read((uint8_t *)resp + n, sizeof(resp) - 1 - n);
+  while (n < RESP_SIZE - 1 && millis() - t0 < HTTP_TIMEOUT_MS && (c.connected() || c.available())) {
+    int got = c.read((uint8_t *)resp + n, RESP_SIZE - 1 - n);
     if (got > 0) n += got;
     else delay(2);
   }
@@ -199,7 +200,7 @@ static void discover() {
         delay(20);
         continue;
       }
-      int n = udp.read((uint8_t *)resp, sizeof(resp) - 1);
+      int n = udp.read((uint8_t *)resp, RESP_SIZE - 1);
       resp[max(n, 0)] = 0;
       IPAddress ip = udp.remoteIP();
       bool known = !strstr(resp, "ZonePlayer");  // autre appareil UPnP : ignoré
@@ -386,7 +387,8 @@ void sonosBegin() {
   art_jpeg = (uint8_t *)heap_caps_malloc(ART_JPEG_MAX, MALLOC_CAP_SPIRAM);
   art_pool = (uint8_t *)heap_caps_malloc(ART_POOL, MALLOC_CAP_SPIRAM);
   if (!art_buf[0] || !art_buf[1] || !art_pool) art_jpeg = nullptr;  // pas de pochette
-  xTaskCreatePinnedToCore(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0);
+  resp = (char *)heap_caps_malloc(RESP_SIZE, MALLOC_CAP_SPIRAM);
+  if (resp) xTaskCreatePinnedToCore(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0);
 }
 
 void sonosGet(SonosTrack &out) {

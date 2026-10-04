@@ -62,4 +62,4 @@ static void demoUpdate() {
   }
 }
 
-extern const Plugin demo_plugin = {"démo", false, nullptr, nullptr, demoShow, demoUpdate, nullptr};
+extern const Plugin demo_plugin = {"mire", false, nullptr, nullptr, demoShow, demoUpdate, nullptr, true};
