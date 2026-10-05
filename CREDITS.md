@@ -10,6 +10,7 @@ bibliothèque, de police, d'image ou de code repris.
 | [Arduino core pour ESP32](https://github.com/espressif/arduino-esp32) 3.3.12 | Espressif Systems | LGPL-2.1 | Framework : `Serial`, `Wire`, `WiFi`, `configTzTime()`, `Preferences` (réglages en flash), `Update` (mise à jour par Wi-Fi), `NetworkClientSecure` (HTTPS) |
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5.5 | Espressif Systems | Apache-2.0 | Pilote LCD RGB `esp_lcd`, `esp_timer`, SNTP, et les composants embarqués (FreeRTOS, lwIP...) |
 | [Open Sans](https://github.com/googlefonts/opensans) 3.003 | The Open Sans Project Authors, © 2020 | SIL Open Font License 1.1 ([texte](include/fonts/OFL.txt)) | Glyphes pré-rendus dans `include/fonts/*.h` |
+| [Logo du Liège Hackerspace](https://github.com/LgHS/branding) | LgHS | GPL-3.0 | Pictogramme de la page agenda (`include/fonts/font_lghs56.h`), converti par `tools/mklogo.py` |
 | [TJpgDec](http://elm-chan.org/fsw/tjpgd/) | ChaN | Licence libre de l'auteur (type BSD) | Décodeur JPEG présent dans la ROM de l'ESP32-S3, utilisé pour les pochettes (`src/sonos.cpp`) |
 
 Aucune bibliothèque externe n'est déclarée dans `platformio.ini` : le pilote d'écran, les
@@ -35,6 +36,7 @@ sans reprendre de police d'icônes.
 | [Open-Meteo](https://open-meteo.com) (`api.open-meteo.com`), données sous licence CC BY 4.0, usage non commercial sans clé | Temps actuel et prévisions heure par heure de la page horloge (`src/weather.cpp`) |
 | [CoinGecko](https://www.coingecko.com) (`api.coingecko.com`), accès public sans clé | Cours des cryptomonnaies de la page crypto (`src/crypto.cpp`) ; la recherche d'une crypto est appelée par le navigateur depuis le back office |
 | [International Space Station APIs](https://github.com/corquaid/international-space-station-APIs) (`corquaid.github.io`), liste tenue à jour par son auteur | Nombre de personnes dans l'espace, sur la page d'accueil (`src/space.cpp`) |
+| Calendrier public du [Liège Hackerspace](https://lghs.be) (`lghs.be/calendar.php`) | Événements de la page agenda (`src/agenda.cpp`) |
 | Recherche de ville d'Open-Meteo (`geocoding-api.open-meteo.com`) | Appelée par le navigateur depuis le back office (`src/web.cpp`), pas par la carte |
 
 ## Sources et références
@@ -55,6 +57,8 @@ Rien n'est copié tel quel de ces projets, mais le code s'appuie dessus.
 - **[SoCo](https://github.com/SoCo/SoCo)** et **[sonos.svrooij.io](https://sonos.svrooij.io/)** : documentation
   communautaire du protocole UPnP des enceintes Sonos, consultée pour `src/sonos.cpp`.
 - **Algorithme de Bresenham** : tracé de lignes de `gfxLine()`.
+- **[Algorithmes de dates de Howard Hinnant](https://howardhinnant.github.io/date_algorithms.html)** (domaine public) :
+  passage d'une date à un nombre de jours et inversement, dans `src/ical.cpp`.
 - **[Astronomy Answers, « Position of the Sun »](https://www.aa.quae.nl/en/reken/zonpositie.html)** (Louis
   Strous) : formules et constantes de la hauteur du soleil et de ses heures de lever et de coucher
   dans `src/astro.cpp` (cycle automatique de luminosité, ligne soleil et lune de la page horloge).

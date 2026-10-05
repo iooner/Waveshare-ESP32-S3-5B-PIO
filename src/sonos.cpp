@@ -1,4 +1,5 @@
 #include "sonos.h"
+#include "text.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <freertos/idf_additions.h>
@@ -98,34 +99,6 @@ static void unescape(char *s) {
       }
     }
     *w++ = *r++;
-  }
-  *w = 0;
-}
-
-// Les polices couvrent le Latin-1 : on remplace sur place les caractères typographiques
-// courants qui n'y sont pas (apostrophe courbe, guillemets anglais, tirets longs, oe lié...)
-static void toLatin1(char *s) {
-  static const struct {
-    const char *from, *to;  // `to` jamais plus long que `from`
-  } MAP[] = {{"‘", "'"}, {"’", "'"}, {"“", "\""}, {"”", "\""}, {"–", "-"},
-             {"—", "-"}, {"…", "..."}, {"œ", "oe"}, {"Œ", "OE"}, {"€", "EUR"}};
-  char *w = s;
-  for (char *r = s; *r;) {
-    bool done = false;
-    if ((uint8_t)*r >= 0xC5) {
-      for (const auto &m : MAP) {
-        size_t n = strlen(m.from);
-        if (strncmp(r, m.from, n) == 0) {
-          size_t k = strlen(m.to);
-          memmove(w, m.to, k);
-          w += k;
-          r += n;
-          done = true;
-          break;
-        }
-      }
-    }
-    if (!done) *w++ = *r++;
   }
   *w = 0;
 }

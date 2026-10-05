@@ -3,6 +3,7 @@
 #include <WiFi.h>
 #include <esp_ota_ops.h>
 #include "astro.h"
+#include "agenda.h"
 #include "brightness.h"
 #include "crypto.h"
 #include "gfx.h"
@@ -53,7 +54,7 @@ static const char COIN_ROW[] =
 static const char COINS_HEAD[] =
     "</section><p>Les pages activées se succèdent en diaporama, chacune pendant sa durée. La page Sonos n'apparaît "
     "que lorsqu'une enceinte joue : prioritaire, elle garde alors l'écran pour elle. La page crypto apparaît dès "
-    "qu'une crypto est choisie."
+    "qu'une crypto est choisie, la page agenda (celui du Liège Hackerspace) dès que son calendrier est lu."
     "<h2>Cryptomonnaies</h2><section><div><input id=cq placeholder='Chercher une crypto'>"
     "<button type=button onclick=cs()>Chercher</button></div><div id=cr></div>";
 
@@ -94,14 +95,14 @@ static const char SETTINGS[] =
 // Arguments : page affichée, heure locale, soleil et lune, heures et minutes de fonctionnement, cause du
 // démarrage, signal Wi-Fi,
 // RAM interne libre et son minimum, images ratées, morceaux en retard et plus longue copie, luminosité,
-// (personnes dans l'espace après la crypto, -1 si inconnu) teinte de nuit, météo, crypto, partition,
+// (agenda puis personnes dans l'espace, -1 si inconnu, après la crypto) teinte de nuit, météo, crypto, partition,
 // marge des piles web, météo, Sonos et crypto
 static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
-    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u</b></div></section>";
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agenda<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, agenda %u</b></div></section>";
 
 static const char SCRIPT[] =
     "<script>let F=document.forms[0];"
@@ -321,6 +322,10 @@ static void sendPage(WiFiClient &c) {
   if (crypto.count == 0) strlcpy(quotes, "aucune choisie", sizeof(quotes));
   else if (quotes_age < 0) strlcpy(quotes, "cours pas encore lus", sizeof(quotes));
   else snprintf(quotes, sizeof(quotes), "cours lus il y a %ld min", (long)(quotes_age / 60));
+  char agenda[40];
+  int32_t agenda_age = agendaAge();
+  if (agenda_age < 0) strlcpy(agenda, "pas encore lu", sizeof(agenda));
+  else snprintf(agenda, sizeof(agenda), "lu il y a %ld min", (long)(agenda_age / 60));
   unsigned long minutes = esp_timer_get_time() / 60000000;
   time_t now = time(nullptr);
   struct tm t;
@@ -355,8 +360,8 @@ static void sendPage(WiFiClient &c) {
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
-      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, spacePeople(), esp_ota_get_running_partition()->label, stackMargin("web"),
-      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"));
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, agenda, spacePeople(), esp_ota_get_running_partition()->label, stackMargin("web"),
+      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("agenda"));
   add("%s", SCRIPT);
 
   // Jamais gardée en cache par le navigateur : elle doit montrer les réglages du moment

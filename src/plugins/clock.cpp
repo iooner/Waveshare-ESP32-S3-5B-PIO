@@ -13,11 +13,8 @@
 #include "net.h"
 #include "plugin.h"
 #include "space.h"
+#include "text.h"
 #include "weather.h"
-
-static const char *const DAYS[] = {"dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"};
-static const char *const MONTHS[] = {"janvier", "février", "mars",      "avril",   "mai",      "juin",
-                                     "juillet", "août",    "septembre", "octobre", "novembre", "décembre"};
 
 // Heure locale, ou faux tant qu'elle n'a pas été reçue : `date` contient alors l'état du réseau
 static bool now(struct tm &t, char *date, size_t cap) {
@@ -27,7 +24,7 @@ static bool now(struct tm &t, char *date, size_t cap) {
   }
   time_t secs = time(nullptr);
   localtime_r(&secs, &t);
-  snprintf(date, cap, "%s %d%s %s %d", DAYS[t.tm_wday], t.tm_mday, t.tm_mday == 1 ? "er" : "", MONTHS[t.tm_mon],
+  snprintf(date, cap, "%s %d%s %s %d", DAY_NAMES[t.tm_wday], t.tm_mday, t.tm_mday == 1 ? "er" : "", MONTH_NAMES[t.tm_mon],
            t.tm_year + 1900);
   return true;
 }

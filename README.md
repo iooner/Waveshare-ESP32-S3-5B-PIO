@@ -35,9 +35,15 @@ Les cours viennent de [CoinGecko](https://www.coingecko.com), sans compte ni cl�
 
 *Cours et quantités d'exemple.*
 
+## Agenda du hackerspace
+
+Une page liste les cinq prochains événements du [Liège Hackerspace](https://lghs.be), avec leur date et leur heure. Elle lit son calendrier public, au format iCalendar, et déroule elle-même les événements qui se répètent (chaque mercredi, le premier jeudi du mois...).
+
+![La page agenda](docs/ecran-agenda.png)
+
 ## Diaporama
 
-Les pages activées se succèdent, chacune pendant une durée réglable : l'accueil, la page crypto, et la page Sonos quand une enceinte joue. Sonos peut aussi être prioritaire : elle garde alors l'écran pour elle tant que la musique joue.
+Les pages activées se succèdent, chacune pendant une durée réglable : l'accueil, la page crypto, la page agenda, et la page Sonos quand une enceinte joue. Sonos peut aussi être prioritaire : elle garde alors l'écran pour elle tant que la musique joue.
 
 En option, un fondu au noir adoucit le passage d'une page à l'autre. Il est appliqué pendant le balayage de l'écran, sans rien redessiner.
 
@@ -87,12 +93,13 @@ La page n'a pas de mot de passe : elle est faite pour rester sur le réseau loca
 | --- | --- |
 | `src/lcd.cpp` | Pilote de la dalle RGB : deux images en PSRAM, échange sans déchirement, lignes gardées en RAM interne |
 | `src/gfx.cpp` | Dessin et texte antialiasé, teinte de nuit |
-| `src/plugin.cpp`, `src/plugins/` | Pages et leur diaporama : accueil (horloge et météo), Sonos, crypto, mire de test |
+| `src/plugin.cpp`, `src/plugins/` | Pages et leur diaporama : accueil (horloge et météo), Sonos, crypto, agenda, mire de test |
 | `src/weather.cpp` | Lecture d'Open-Meteo, fuseau horaire du lieu |
 | `src/astro.cpp` | Soleil et lune |
 | `src/space.cpp` | Nombre de personnes dans l'espace |
 | `src/sonos.cpp` | Lecture des enceintes Sonos du réseau local |
 | `src/crypto.cpp` | Cours des cryptomonnaies, en HTTPS |
+| `src/agenda.cpp`, `src/ical.cpp` | Agenda du hackerspace : lecture du calendrier, récurrences comprises |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
 | `src/web.cpp` | Back office et mise à jour par Wi-Fi |
 | `tools/` | Génération des polices et des pictogrammes |

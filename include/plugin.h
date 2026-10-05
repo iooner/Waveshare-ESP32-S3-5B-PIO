@@ -68,5 +68,6 @@ void pluginSetSlide(uint8_t index, const PluginSlide &s);
 extern const Plugin clock_bar_plugin;  // barre : date à gauche, heure à droite
 extern const Plugin sonos_plugin;      // page : morceau en cours sur les enceintes Sonos, quand elles jouent
 extern const Plugin crypto_plugin;     // page : cours des cryptomonnaies choisies et valeur du portefeuille
+extern const Plugin agenda_plugin;     // page : prochains événements du Liège Hackerspace
 extern const Plugin clock_plugin;      // page plein écran : heure et date en grand, météo des heures à venir
 extern const Plugin demo_plugin;       // page : mire de test (couleurs, texte, carré animé, FPS)
