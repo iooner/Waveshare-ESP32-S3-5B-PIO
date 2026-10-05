@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <freertos/idf_additions.h>
+#include "json.h"
 #include "net.h"
 #include "secrets.h"
 
@@ -31,17 +32,9 @@ static char *resp;  // réponse HTTP en cours, en PSRAM
 // La réponse est un objet à plat de nombres et de tableaux de nombres : pas besoin d'un vrai
 // analyseur, on cherche chaque clé à partir du début de son objet.
 
-// Ce qui suit `"key":` après `from`, ou nul
-static const char *value(const char *from, const char *key) {
-  char pattern[40];
-  int len = snprintf(pattern, sizeof(pattern), "\"%s\":", key);
-  const char *p = from ? strstr(from, pattern) : nullptr;
-  return p ? p + len : nullptr;
-}
-
 // Lit le tableau de nombres `key`, `cap` valeurs au plus. Renvoie le nombre de valeurs lues.
 static uint8_t numbers(const char *from, const char *key, double *out, uint8_t cap) {
-  const char *p = value(from, key);
+  const char *p = jsonValue(from, key);
   if (!p || *p != '[') return 0;
   uint8_t n = 0;
   while (n < cap) {
@@ -83,8 +76,8 @@ static bool fetch() {
   if (!strstr(resp, " 200 ")) return false;
 
   // Les objets de la réponse ont des clés en commun : chacune est cherchée à partir de son objet
-  const char *now = value(resp, "current"), *hourly = value(now, "hourly");
-  const char *temp = value(now, "temperature_2m"), *code = value(now, "weather_code"), *day = value(now, "is_day");
+  const char *now = jsonValue(resp, "current"), *hourly = jsonValue(now, "hourly");
+  const char *temp = jsonValue(now, "temperature_2m"), *code = jsonValue(now, "weather_code"), *day = jsonValue(now, "is_day");
   if (!hourly || !temp || !code || !day) return false;
   Weather w = {};
   w.now = {0, (int8_t)lround(atof(temp)), (uint8_t)atoi(code), 0, atoi(day) != 0};
@@ -100,7 +93,7 @@ static bool fetch() {
   }
 
   // Pluie par quart d'heure. Si elle manque, le reste de la météo est gardé.
-  const char *quarters = value(resp, "minutely_15");
+  const char *quarters = jsonValue(resp, "minutely_15");
   w.quarter_count = min(numbers(quarters, "time", v[0], WEATHER_QUARTERS),
                         numbers(quarters, "precipitation", v[1], WEATHER_QUARTERS));
   w.quarters_from = w.quarter_count ? (time_t)v[0][0] : 0;
@@ -110,7 +103,7 @@ static bool fetch() {
 
   // L'heure locale suit le fuseau du lieu. Un décalage fixe ne change d'heure, été comme hiver,
   // qu'à la lecture suivante : dans le fuseau par défaut, on garde donc sa règle complète.
-  const char *zone = value(resp, "timezone"), *offset = value(resp, "utc_offset_seconds");
+  const char *zone = jsonValue(resp, "timezone"), *offset = jsonValue(resp, "utc_offset_seconds");
   if (zone && offset) {
     bool home = strncmp(zone, "\"" NET_TIMEZONE_NAME "\"", sizeof(NET_TIMEZONE_NAME) + 1) == 0;
     netSetTimezone(home ? NET_TIMEZONE_DEFAULT : atoi(offset));

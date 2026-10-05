@@ -2,18 +2,39 @@
 #include <Preferences.h>
 
 #define MAX_PAGES  8
+#define FADE_STEP  1  // niveaux de clarté gagnés ou perdus par image : un fondu dure 9 images, soit un quart de seconde
 
 static const Plugin *bar;
 static const Plugin *const *pages;
 static uint8_t count;
 static int8_t current = -1;
 static uint8_t drawn_night;      // teinte de nuit de ce qui est à l'écran
-static bool enabled[MAX_PAGES];  // modifié par le back office, depuis une autre tâche
-static PluginRotation rotation = {false, 30, 10};  // idem
-static bool home_turn;           // alternance : c'est le tour de la page par défaut
-static uint32_t turn_at;         // début du tour en cours
+static PluginSlide slides[MAX_PAGES];  // modifiés par le back office, depuis une autre tâche
+static uint8_t slide;         // diaporama : la page dont c'est le tour
+static uint32_t turn_at;      // début de ce tour
+static uint8_t was_showable;  // pages qui avaient quelque chose à montrer à l'image précédente, un bit chacune
+static bool fade_on = true;   // fondu entre les pages, réglé dans le back office
+static uint8_t fade_level = LCD_FADE_MAX;  // clarté demandée à l'écran ; remonte d'elle-même après un changement de page
+
+// Clé de flash d'un réglage de page : son nom, précédé d'une lettre
+static const char *key(char prefix, uint8_t index) {
+  static char text[16];
+  snprintf(text, sizeof(text), "%c_%s", prefix, pages[index]->name);
+  return text;
+}
 
 static void showPage(uint8_t index) {
+  // Fondu : la page en place s'éteint, puis tout le changement se fait dans le noir, où le
+  // balayage ne lit plus la PSRAM. La nouvelle page s'éclaire ensuite image après image, depuis
+  // pluginsLoop(). Pas de fondu pour la toute première page.
+  if (fade_on && current >= 0) {
+    while (fade_level > 0) {
+      fade_level = fade_level > FADE_STEP ? fade_level - FADE_STEP : 0;
+      lcdSetFade(fade_level);
+      lcdPresent();  // rien à afficher de neuf : attend l'image suivante
+    }
+    lcdPresent();  // le noir est maintenant en cours de balayage
+  }
   if (current >= 0 && pages[current]->hide) pages[current]->hide();
   current = index;
   Serial.printf("Page : %s\n", pages[index]->name);
@@ -31,10 +52,18 @@ void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
   count = min<uint8_t>(n, MAX_PAGES);
   Preferences prefs;
   prefs.begin("pages");
-  for (uint8_t i = 0; i < count; i++) enabled[i] = prefs.getBool(pages[i]->name, !pages[i]->optional);
-  rotation.enabled = prefs.getBool("alterne", rotation.enabled);
-  rotation.page_seconds = prefs.getUShort("t_page", rotation.page_seconds);
-  rotation.home_seconds = prefs.getUShort("t_accueil", rotation.home_seconds);
+  // Réglages de la version précédente, où seule une page exclusive pouvait alterner avec l'accueil
+  bool alternated = prefs.getBool("alterne", false);
+  for (uint8_t i = 0; i < count; i++) {
+    const Plugin *page = pages[i];
+    bool home = i == count - 1, was_exclusive = page->exclusive && !page->optional;
+    uint16_t seconds = home ? prefs.getUShort("t_accueil", 15) : was_exclusive ? prefs.getUShort("t_page", 15) : 15;
+    slides[i].enabled = home || prefs.getBool(page->name, !page->optional);
+    slides[i].exclusive = !home && prefs.getBool(key('x', i), page->exclusive && !(was_exclusive && alternated));
+    slides[i].seconds = prefs.getUShort(key('t', i), seconds);
+  }
+  slide = count - 1;
+  fade_on = prefs.getBool("fondu", fade_on);
   prefs.end();
 
   if (bar->begin) bar->begin();
@@ -44,23 +73,39 @@ void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
   pluginsLoop();
 }
 
-void pluginsLoop() {
-  uint8_t wanted = 0;
-  while (wanted < count - 1 && (!enabled[wanted] || (pages[wanted]->active && !pages[wanted]->active()))) wanted++;
+// La page a-t-elle sa place à l'écran en ce moment ? L'accueil, toujours.
+static bool showable(uint8_t i) {
+  return i == count - 1 || (slides[i].enabled && (!pages[i]->active || pages[i]->active()));
+}
 
-  // Alternance, pour une page qui n'a pas toujours quelque chose à montrer : elle commence par
-  // son propre tour, puis cède l'écran à la page par défaut, et ainsi de suite
-  PluginRotation r = rotation;
-  if (r.enabled && wanted < count - 1 && pages[wanted]->active) {
-    if (millis() - turn_at >= (home_turn ? r.home_seconds : r.page_seconds) * 1000UL) {
-      home_turn = !home_turn;
+void pluginsLoop() {
+  if (fade_level < LCD_FADE_MAX) {
+    fade_level = min<uint8_t>(fade_level + FADE_STEP, LCD_FADE_MAX);
+    lcdSetFade(fade_level);
+  }
+
+  uint8_t now_showable = 0, wanted = count;
+  for (uint8_t i = 0; i < count; i++) {
+    if (!showable(i)) continue;
+    now_showable |= 1 << i;
+    if (wanted == count && slides[i].exclusive) wanted = i;
+  }
+  if (wanted < count) {
+    turn_at = millis();  // après une page exclusive, le diaporama reprend par un tour complet
+  } else {
+    uint8_t fresh = now_showable & ~was_showable;
+    if (fresh) {
+      slide = __builtin_ctz(fresh);
+      turn_at = millis();
+    } else if (!(now_showable >> slide & 1) ||
+               (now_showable != 1 << slide && millis() - turn_at >= slides[slide].seconds * 1000UL)) {
+      do slide = (slide + 1) % count;
+      while (!(now_showable >> slide & 1));
       turn_at = millis();
     }
-    if (home_turn) wanted = count - 1;
-  } else {
-    home_turn = false;
-    turn_at = millis();
+    wanted = slide;
   }
+  was_showable = now_showable;
 
   if (wanted != current) {
     drawn_night = gfxNight();
@@ -84,40 +129,42 @@ uint8_t pluginCount() {
   return count;
 }
 
-const char *pluginName(uint8_t index) {
-  return pages[index]->name;
+bool pluginFade() {
+  return fade_on;
+}
+
+void pluginSetFade(bool on) {
+  if (on == fade_on) return;
+  fade_on = on;
+  Preferences prefs;
+  prefs.begin("pages");
+  prefs.putBool("fondu", on);
+  prefs.end();
+}
+
+const Plugin *pluginAt(uint8_t index) {
+  return pages[index];
 }
 
 const char *pluginCurrentName() {
   return current >= 0 ? pages[current]->name : "";
 }
 
-bool pluginEnabled(uint8_t index) {
-  return enabled[index];
+void pluginSlide(uint8_t index, PluginSlide &out) {
+  out = slides[index];
 }
 
-void pluginRotation(PluginRotation &out) {
-  out = rotation;
-}
-
-void pluginSetRotation(const PluginRotation &r) {
-  PluginRotation n = {r.enabled, constrain(r.page_seconds, (uint16_t)5, (uint16_t)3600),
-                      constrain(r.home_seconds, (uint16_t)5, (uint16_t)3600)};
-  if (n.enabled == rotation.enabled && n.page_seconds == rotation.page_seconds && n.home_seconds == rotation.home_seconds) return;
-  rotation = n;
+void pluginSetSlide(uint8_t index, const PluginSlide &s) {
+  if (index >= count) return;
+  bool home = index == count - 1;
+  PluginSlide n = {home || s.enabled, !home && s.exclusive, constrain(s.seconds, (uint16_t)5, (uint16_t)3600)};
+  PluginSlide &o = slides[index];
+  if (n.enabled == o.enabled && n.exclusive == o.exclusive && n.seconds == o.seconds) return;
+  o = n;
   Preferences prefs;
   prefs.begin("pages");
-  prefs.putBool("alterne", n.enabled);
-  prefs.putUShort("t_page", n.page_seconds);
-  prefs.putUShort("t_accueil", n.home_seconds);
-  prefs.end();
-}
-
-void pluginSetEnabled(uint8_t index, bool on) {
-  if (index >= count || enabled[index] == on) return;
-  enabled[index] = on;
-  Preferences prefs;
-  prefs.begin("pages");
-  prefs.putBool(pages[index]->name, on);
+  prefs.putBool(pages[index]->name, n.enabled);
+  prefs.putBool(key('x', index), n.exclusive);
+  prefs.putUShort(key('t', index), n.seconds);
   prefs.end();
 }

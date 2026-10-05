@@ -34,34 +34,39 @@ struct Plugin {
   void (*update)();  // à chaque image tant qu'il est affiché : ne redessiner que ce qui change. Peut être nul.
   void (*hide)();    // avant de céder la place. Peut être nul.
   bool optional;     // désactivée tant qu'on ne l'active pas dans le back office (web.h)
+  bool exclusive;    // garde l'écran quand elle a quelque chose à montrer, au lieu de prendre son tour dans le
+                     // diaporama. Pour une page non optionnelle, ce n'est que le réglage de départ.
 };
 
-// Initialise tous les plugins. La dernière page de la liste doit être toujours active.
+// Initialise tous les plugins. La dernière page de la liste, l'accueil, doit être toujours active.
+//
+// Quelle page est à l'écran : la première de la liste qui est exclusive et a quelque chose à
+// montrer ; à défaut, les pages qui ont quelque chose à montrer se succèdent en diaporama,
+// chacune pendant sa durée. Une page qui vient d'avoir quelque chose à montrer passe tout de suite.
 void pluginsBegin(const Plugin *bar, const Plugin *const *pages, uint8_t count);
 
 // A appeler à chaque image, avant lcdPresent()
 void pluginsLoop();
 
-// Pages, dans l'ordre de priorité. Une page désactivée n'est jamais affichée ; le choix est
-// gardé en flash. La dernière page reste toujours active.
-uint8_t pluginCount();
-const char *pluginName(uint8_t index);
-bool pluginEnabled(uint8_t index);
-const char *pluginCurrentName();  // la page à l'écran
-void pluginSetEnabled(uint8_t index, bool on);
-
-// Alternance : tant qu'une page a quelque chose à montrer (Sonos qui joue), elle partage l'écran
-// avec la page par défaut, chacune son tour. Sans alternance, elle garde l'écran. Gardé en flash.
-struct PluginRotation {
-  bool enabled;
-  uint16_t page_seconds;  // durée à l'écran de la page qui a quelque chose à montrer
-  uint16_t home_seconds;  // puis de la page par défaut
+// Pages, dans l'ordre de la liste, et leurs réglages, gardés en flash
+struct PluginSlide {
+  bool enabled;      // une page désactivée n'est jamais affichée ; l'accueil ne se désactive pas
+  bool exclusive;    // voir Plugin::exclusive
+  uint16_t seconds;  // durée de son tour dans le diaporama
 };
-void pluginRotation(PluginRotation &out);
-void pluginSetRotation(const PluginRotation &r);
+uint8_t pluginCount();
+const Plugin *pluginAt(uint8_t index);
+
+// Fondu au noir entre deux pages, au lieu d'un changement sec. Gardé en flash.
+bool pluginFade();
+void pluginSetFade(bool on);
+const char *pluginCurrentName();  // la page à l'écran
+void pluginSlide(uint8_t index, PluginSlide &out);
+void pluginSetSlide(uint8_t index, const PluginSlide &s);
 
 // Plugins disponibles
 extern const Plugin clock_bar_plugin;  // barre : date à gauche, heure à droite
 extern const Plugin sonos_plugin;      // page : morceau en cours sur les enceintes Sonos, quand elles jouent
+extern const Plugin crypto_plugin;     // page : cours des cryptomonnaies choisies et valeur du portefeuille
 extern const Plugin clock_plugin;      // page plein écran : heure et date en grand, météo des heures à venir
 extern const Plugin demo_plugin;       // page : mire de test (couleurs, texte, carré animé, FPS)

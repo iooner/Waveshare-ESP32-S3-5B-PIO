@@ -76,7 +76,8 @@ static void drawArtSlice() {
   if (version != shown_art) shown_art = version, art = latest, art_row = 0;
   if (art_row >= SONOS_ART_SIZE) return;
 
-  int16_t n = min<int16_t>(ART_STEP, SONOS_ART_SIZE - art_row);
+  // Dans le noir d'un fondu, le balayage ne lit pas la PSRAM : la pochette peut être écrite d'un coup
+  int16_t n = lcdFade() == 0 ? SONOS_ART_SIZE - art_row : min<int16_t>(ART_STEP, SONOS_ART_SIZE - art_row);
   if (art) gfxBlit(ART_X, ART_Y + art_row, SONOS_ART_SIZE, n, art + art_row * SONOS_ART_SIZE);
   else gfxFillRect(ART_X, ART_Y + art_row, SONOS_ART_SIZE, n, COLOR_TRACK);
   art_row += n;
@@ -120,7 +121,7 @@ static void sonosShow() {
 
 // La pochette est effacée par tranches avant de rendre l'écran, pour la même raison qu'à l'affichage
 static void sonosHide() {
-  for (int16_t y = 0; y < SONOS_ART_SIZE; y += ART_STEP) {
+  for (int16_t y = 0; y < SONOS_ART_SIZE && lcdFade() != 0; y += ART_STEP) {
     gfxFillRect(ART_X, ART_Y + y, SONOS_ART_SIZE, ART_STEP, COLOR_BG);
     lcdPresent();
   }
@@ -128,4 +129,4 @@ static void sonosHide() {
   lcdPresent();
 }
 
-extern const Plugin sonos_plugin = {"sonos", false, sonosBegin, sonosActive, sonosShow, sonosUpdate, sonosHide};
+extern const Plugin sonos_plugin = {"sonos", false, sonosBegin, sonosActive, sonosShow, sonosUpdate, sonosHide, false, true};

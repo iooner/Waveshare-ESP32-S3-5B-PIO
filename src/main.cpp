@@ -7,9 +7,9 @@
 #include "plugin.h"
 #include "web.h"
 
-// Pages par ordre de priorité : la première qui a quelque chose à montrer est affichée.
-// Elles s'activent et se désactivent dans le back office (web.h) ; la mire de test est désactivée au départ.
-static const Plugin *const pages[] = {&demo_plugin, &sonos_plugin, &clock_plugin};
+// Pages, dans l'ordre du diaporama ; l'accueil en dernier. Elles se règlent dans le back office
+// (web.h) ; la mire de test est désactivée au départ.
+static const Plugin *const pages[] = {&demo_plugin, &sonos_plugin, &crypto_plugin, &clock_plugin};
 
 void setup() {
   Serial.begin(115200);

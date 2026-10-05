@@ -41,8 +41,19 @@ struct LcdStats {
 };
 void lcdStats(LcdStats &out);
 
-// Images ratées depuis le démarrage
+// Images ratées et morceaux en retard depuis le démarrage, plus longue copie d'un morceau depuis
+// la lecture précédente (en microsecondes ; elle doit rester sous deux durées de morceau, ~840)
 uint32_t lcdBadFrames();
+uint32_t lcdLateChunks();
+uint32_t lcdMaxCopyUs();
+
+// Fondu : clarté de tout l'écran, de 0 (noir) à LCD_FADE_MAX (couleurs telles quelles), par
+// paliers à peu près réguliers pour l'oeil. Elle est appliquée pendant le balayage, sans rien
+// redessiner, et change d'une image à la suivante. A 0, le balayage ne lit plus la PSRAM : c'est
+// le moment d'y écrire en grand.
+#define LCD_FADE_MAX  9
+void lcdSetFade(uint8_t level);
+uint8_t lcdFade();  // clarté de l'image en cours de balayage
 
 // Découpe un rectangle aux bords de l'écran. Faux s'il n'en reste rien.
 static inline bool lcdClip(int16_t &x, int16_t &y, int16_t &w, int16_t &h) {

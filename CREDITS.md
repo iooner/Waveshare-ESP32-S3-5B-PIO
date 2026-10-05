@@ -7,7 +7,7 @@ bibliothèque, de police, d'image ou de code repris.
 
 | Quoi | Auteur | Licence | Utilisation |
 | --- | --- | --- | --- |
-| [Arduino core pour ESP32](https://github.com/espressif/arduino-esp32) 3.3.12 | Espressif Systems | LGPL-2.1 | Framework : `Serial`, `Wire`, `WiFi`, `configTzTime()`, `Preferences` (réglages en flash), `Update` (mise à jour par Wi-Fi) |
+| [Arduino core pour ESP32](https://github.com/espressif/arduino-esp32) 3.3.12 | Espressif Systems | LGPL-2.1 | Framework : `Serial`, `Wire`, `WiFi`, `configTzTime()`, `Preferences` (réglages en flash), `Update` (mise à jour par Wi-Fi), `NetworkClientSecure` (HTTPS) |
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5.5 | Espressif Systems | Apache-2.0 | Pilote LCD RGB `esp_lcd`, `esp_timer`, SNTP, et les composants embarqués (FreeRTOS, lwIP...) |
 | [Open Sans](https://github.com/googlefonts/opensans) 3.003 | The Open Sans Project Authors, © 2020 | SIL Open Font License 1.1 ([texte](include/fonts/OFL.txt)) | Glyphes pré-rendus dans `include/fonts/*.h` |
 | [TJpgDec](http://elm-chan.org/fsw/tjpgd/) | ChaN | Licence libre de l'auteur (type BSD) | Décodeur JPEG présent dans la ROM de l'ESP32-S3, utilisé pour les pochettes (`src/sonos.cpp`) |
@@ -33,6 +33,7 @@ sans reprendre de police d'icônes.
 | Enceintes Sonos du réseau local (UPnP, port 1400) | Morceau en cours, lu directement sur les enceintes |
 | Serveur d'images de Spotify (`i.scdn.co`) | Pochette du morceau en cours |
 | [Open-Meteo](https://open-meteo.com) (`api.open-meteo.com`), données sous licence CC BY 4.0, usage non commercial sans clé | Temps actuel et prévisions heure par heure de la page horloge (`src/weather.cpp`) |
+| [CoinGecko](https://www.coingecko.com) (`api.coingecko.com`), accès public sans clé | Cours des cryptomonnaies de la page crypto (`src/crypto.cpp`) ; la recherche d'une crypto est appelée par le navigateur depuis le back office |
 | Recherche de ville d'Open-Meteo (`geocoding-api.open-meteo.com`) | Appelée par le navigateur depuis le back office (`src/web.cpp`), pas par la carte |
 
 ## Sources et références

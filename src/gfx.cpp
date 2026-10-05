@@ -6,6 +6,11 @@
 typedef uint32_t __attribute__((may_alias)) pixpair_t;
 
 static uint8_t night = 0;  // teinte de nuit en place
+static bool coarse = false;
+
+void gfxSetCoarse(bool on) {
+  coarse = on;
+}
 
 void gfxSetNight(uint8_t level) {
   night = min<uint8_t>(level, GFX_NIGHT_MAX);
@@ -113,6 +118,7 @@ static const GfxGlyph &nextGlyph(const char *&s, const GfxFont &font) {
   uint8_t extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : 0;
   if (extra) cp = c & (0x3F >> extra);
   while (extra-- && (*s & 0xC0) == 0x80) cp = cp << 6 | (*s++ & 0x3F);
+  if (cp == 0x20AC) cp = 0x80;  // l'euro est rangé à sa place de Windows-1252 (tools/mkfont.py)
   if (cp < font.first || cp > font.last) cp = '?';
   if (cp < font.first || cp > font.last) return none;
   return font.glyphs[cp - font.first];
@@ -159,6 +165,7 @@ int16_t gfxText(int16_t x, int16_t y, const char *text, const GfxFont &font, uin
       uint16_t *dst = lcd_fb + (gy + r) * LCD_WIDTH + gx;
       for (int16_t c = c0; c < c1; c++) {
         uint8_t a = c & 1 ? src[c >> 1] & 0x0F : src[c >> 1] >> 4;
+        if (coarse) a = (a + 1) / 3 * 3;
         if (a == 0) continue;
         dst[c] = opaque ? lut[a] : a == 15 ? color : blend565(color, dst[c], a);
       }

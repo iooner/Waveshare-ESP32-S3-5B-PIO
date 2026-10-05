@@ -5,7 +5,8 @@ Exemples :
   mkfont.py OpenSans.ttf 24 font_sans24 --weight SemiBold > include/fonts/font_sans24.h
   mkfont.py OpenSans.ttf 200 font_clock --weight Bold --chars "0123456789:" > include/fonts/font_clock.h
 
-Sans --chars, couvre l'ASCII et le Latin-1 (accents français). Nécessite Pillow (pip install pillow).
+Sans --chars, couvre l'ASCII et le Latin-1 (accents français), plus l'euro, rangé au code 0x80
+comme dans Windows-1252 : gfxText() l'y cherche. Nécessite Pillow (pip install pillow).
 """
 import argparse
 from PIL import Image, ImageDraw, ImageFont
@@ -22,7 +23,8 @@ font = ImageFont.truetype(args.font, args.size)
 if args.weight:
     font.set_variation_by_name(args.weight)
 
-chars = set(args.chars) if args.chars else {chr(c) for c in range(32, 256) if not 127 <= c < 160}
+chars = set(args.chars) if args.chars else {chr(c) for c in range(32, 256) if not 127 <= c < 160} | {"\x80"}
+ALIASES = {"\x80": "€"}  # caractère dessiné à la place de celui du code
 first, last = min(map(ord, chars)), max(map(ord, chars))
 
 ascent, descent = font.getmetrics()
@@ -32,8 +34,8 @@ pad = args.size  # marge pour les glyphes qui débordent de leur case
 bitmap = bytearray()
 glyphs = []
 for cp in range(first, last + 1):
-    ch = chr(cp)
-    adv = round(font.getlength(ch)) if ch in chars else 0
+    ch = ALIASES.get(chr(cp), chr(cp))
+    adv = round(font.getlength(ch)) if chr(cp) in chars else 0
     img = Image.new("L", (adv + 2 * pad, line_h + 2 * pad), 0)
     if adv:
         ImageDraw.Draw(img).text((pad, pad), ch, font=font, fill=255)

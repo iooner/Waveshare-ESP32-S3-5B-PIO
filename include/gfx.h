@@ -35,6 +35,11 @@ struct GfxFont {
 void gfxSetNight(uint8_t level);
 uint8_t gfxNight();
 
+// Antialiasing du texte réduit à 5 niveaux pour ce qui est dessiné ensuite. Trois couleurs de
+// texte tiennent alors sur une même ligne de pixels dans les 16 que garde le pilote (lcd.h),
+// au lieu d'une seule.
+void gfxSetCoarse(bool on);
+
 void gfxClear(uint16_t color);
 void gfxPixel(int16_t x, int16_t y, uint16_t color);
 void gfxFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);

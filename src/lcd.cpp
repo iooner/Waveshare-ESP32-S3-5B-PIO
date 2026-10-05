@@ -92,7 +92,8 @@ static int16_t img_x0, img_x1, img_y0, img_y1;  // zone d'image déclarée par l
 static uint32_t deferred[(LCD_HEIGHT + 31) / 32];  // lignes à redécrire quand des cases se libèrent
 
 static LcdStats stats;
-static uint32_t bad_frames_total = 0;
+static uint32_t bad_frames_total = 0, late_chunks_total = 0, max_copy_cycles = 0;
+static volatile uint8_t fade = LCD_FADE_MAX, fade_wanted = LCD_FADE_MAX;  // clarté en place, et celle demandée
 static portMUX_TYPE stats_mux = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t grid_base;  // instant de référence de la grille pour l'image en cours
 static bool grid_set = false;
@@ -116,6 +117,35 @@ static inline __attribute__((always_inline)) void unpack(uint16_t *dst, const Ce
 }
 
 // Rend à la réserve l'en-tête et les cases d'une ligne, sauf les cases qu'elle partage avec `keep`
+// Fondu : chaque niveau de clarté est la somme d'un ou deux décalages de la couleur (1/2 + 1/4
+// pour les trois quarts...). Cela se calcule sur deux pixels à la fois, sans multiplication : une
+// image lue en PSRAM peut être assombrie pendant le balayage sans le mettre en retard. Mesuré
+// avec une multiplication par pixel : 40 morceaux en retard et une image ratée par fondu.
+// Décalages de chaque niveau, de 0 (noir) à LCD_FADE_MAX ; 6 : terme absent.
+static DRAM_ATTR const uint8_t FADE_SHIFT[LCD_FADE_MAX + 1][2] = {
+    {6, 6}, {5, 6}, {4, 6}, {3, 6}, {3, 4}, {2, 6}, {2, 3}, {1, 6}, {1, 2}, {0, 6}};
+// Après un décalage de s bits, ce qui reste de chaque composante de deux pixels RGB565 : les
+// bits venus de la composante voisine sont écartés
+#define FADE_MASK16(s)  ((0x1Fu >> (s)) << 11 | (0x3Fu >> (s)) << 5 | 0x1Fu >> (s))
+#define FADE_MASK(s)    (FADE_MASK16(s) << 16 | FADE_MASK16(s))
+static DRAM_ATTR const uint32_t FADE_MASKS[7] = {FADE_MASK(0), FADE_MASK(1), FADE_MASK(2), FADE_MASK(3),
+                                                 FADE_MASK(4), FADE_MASK(5), 0};
+
+struct Fade {
+  uint32_t a, b, mask_a, mask_b;
+};
+
+// Assombrit deux pixels d'un coup (ou une seule couleur, dans les 16 bits du bas)
+static inline __attribute__((always_inline)) uint32_t dim(uint32_t pixels, const Fade &f) {
+  return (pixels >> f.a & f.mask_a) + (pixels >> f.b & f.mask_b);
+}
+
+// n pixels, n pair, à partir d'une adresse alignée sur 4 octets
+static inline __attribute__((always_inline)) void dimSpan(uint16_t *px, uint32_t n, const Fade &f) {
+  uint32_t *p = (uint32_t *)px;
+  for (n >>= 1; n; n--, p++) *p = dim(*p, f);
+}
+
 static void releaseRow(const RowInfo &r, const RowInfo &keep) {
   if (r.head == NONE) return;
   const RowHead &h = heads[r.head];
@@ -226,19 +256,39 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
   const uint16_t *fb = fbs[scan];
   uint16_t *out = (uint16_t *)dst;
   uint32_t y = chunk * LCD_BOUNCE_LINES;
+  // Fondu : une ligne compacte est assombrie par sa palette, 16 couleurs à recalculer ; ce qui
+  // est lu en PSRAM l'est pixel par pixel. Au noir complet, rien n'est lu du tout.
+  uint32_t k = fade;
+  bool faded = k != LCD_FADE_MAX;
+  const Fade f = {FADE_SHIFT[k][0], FADE_SHIFT[k][1], FADE_MASKS[FADE_SHIFT[k][0]], FADE_MASKS[FADE_SHIFT[k][1]]};
   for (uint32_t i = 0; i < LCD_BOUNCE_LINES; i++, y++, out += LCD_WIDTH) {
+    if (k == 0) {
+      fillPairs(out, 0, LCD_WIDTH);
+      continue;
+    }
     const RowInfo &r = rows[y];
-    fillPairs(out, r.bg, r.x0);
-    fillPairs(out + r.x1, r.bg, LCD_WIDTH - r.x1);
+    uint16_t bg = faded ? dim(r.bg, f) : r.bg;
+    fillPairs(out, bg, r.x0);
+    fillPairs(out + r.x1, bg, LCD_WIDTH - r.x1);
     if (r.head != NONE) {
       const RowHead &h = heads[r.head];
+      const uint16_t *palette = h.palette;
+      uint16_t dimmed[16];
+      if (faded) {
+        for (uint32_t c = 0; c < 16; c++) dimmed[c] = dim(h.palette[c], f);
+        palette = dimmed;
+      }
       for (uint32_t c = 0, m = r.mask; m; c++, m >>= 1) {
-        if (m & 1) unpack(out + CELL_X0 + c * CELL_PX, cells[h.cell[c]], h.palette);
+        if (m & 1) unpack(out + CELL_X0 + c * CELL_PX, cells[h.cell[c]], palette);
       }
     } else if (r.x0 != r.x1) {
       memcpy(out + r.x0, fb + y * LCD_WIDTH + r.x0, (r.x1 - r.x0) * sizeof(uint16_t));
+      if (faded) dimSpan(out + r.x0, r.x1 - r.x0, f);
     }
-    if (r.ix0 != r.ix1) memcpy(out + r.ix0, fb + y * LCD_WIDTH + r.ix0, (r.ix1 - r.ix0) * sizeof(uint16_t));
+    if (r.ix0 != r.ix1) {
+      memcpy(out + r.ix0, fb + y * LCD_WIDTH + r.ix0, (r.ix1 - r.ix0) * sizeof(uint16_t));
+      if (faded) dimSpan(out + r.ix0, r.ix1 - r.ix0, f);
+    }
   }
 
   // Si le morceau suivant est surtout lu en PSRAM (une image), on le précharge dans le cache
@@ -265,8 +315,9 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
 
   // Le tampon repart à l'écran un morceau plus tard : la copie doit avoir commencé avant,
   // et finir avant que l'envoi ne la rattrape
-  if ((uint32_t)late > CHUNK_CYCLES || late + dt > 2 * CHUNK_CYCLES) stats.late_chunks++;
+  if ((uint32_t)late > CHUNK_CYCLES || late + dt > 2 * CHUNK_CYCLES) stats.late_chunks++, late_chunks_total++;
   if (dt > stats.max_copy_us) stats.max_copy_us = dt;  // en cycles, converti à la lecture
+  if (dt > max_copy_cycles) max_copy_cycles = dt;
   last_chunk = chunk;
   return false;
 }
@@ -286,6 +337,7 @@ static bool IRAM_ATTR onFrameDone(esp_lcd_panel_handle_t, const esp_lcd_rgb_pane
   for (uint32_t i = 0, n = staged_count; i < n; i++) rows[staged[i].y] = staged[i].info;
   staged_count = 0;
   scan = pending;
+  fade = fade_wanted;  // la clarté ne change qu'entre deux images
   portEXIT_CRITICAL_ISR(&swap_mux);
   BaseType_t woken = pdFALSE;
   xSemaphoreGiveFromISR(frame_sem, &woken);
@@ -294,6 +346,24 @@ static bool IRAM_ATTR onFrameDone(esp_lcd_panel_handle_t, const esp_lcd_rgb_pane
 
 uint32_t lcdBadFrames() {
   return bad_frames_total;
+}
+
+uint32_t lcdLateChunks() {
+  return late_chunks_total;
+}
+
+uint32_t lcdMaxCopyUs() {
+  uint32_t cycles = max_copy_cycles;
+  max_copy_cycles = 0;
+  return cycles / CPU_MHZ;
+}
+
+void lcdSetFade(uint8_t level) {
+  fade_wanted = min<uint8_t>(level, LCD_FADE_MAX);
+}
+
+uint8_t lcdFade() {
+  return fade;
 }
 
 void lcdStats(LcdStats &out) {
