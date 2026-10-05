@@ -47,7 +47,18 @@ void pluginsLoop();
 uint8_t pluginCount();
 const char *pluginName(uint8_t index);
 bool pluginEnabled(uint8_t index);
+const char *pluginCurrentName();  // la page à l'écran
 void pluginSetEnabled(uint8_t index, bool on);
+
+// Alternance : tant qu'une page a quelque chose à montrer (Sonos qui joue), elle partage l'écran
+// avec la page par défaut, chacune son tour. Sans alternance, elle garde l'écran. Gardé en flash.
+struct PluginRotation {
+  bool enabled;
+  uint16_t page_seconds;  // durée à l'écran de la page qui a quelque chose à montrer
+  uint16_t home_seconds;  // puis de la page par défaut
+};
+void pluginRotation(PluginRotation &out);
+void pluginSetRotation(const PluginRotation &r);
 
 // Plugins disponibles
 extern const Plugin clock_bar_plugin;  // barre : date à gauche, heure à droite

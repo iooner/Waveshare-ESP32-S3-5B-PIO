@@ -29,23 +29,31 @@ static const char HEAD[] =
     "section>*{display:flex;align-items:center;gap:.7em;min-height:2.9em;border-top:1px solid #333}"
     "section>:first-child{border:0}input[type=checkbox]{width:1.3em;height:1.3em;margin-left:auto;accent-color:#30d158}"
     "input[type=range]{flex:1;min-width:0;accent-color:#0a84ff}input:not([type]),button{font:inherit;color:#fff;"
-    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}input[type=time]{font:inherit;color:#fff;background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
+    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}"
+    "input[type=number]{width:4.5em;text-align:right}input[type=time],input[type=number]{font:inherit;color:#fff;"
+    "background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
     "button{background:#0a84ff}#r{flex-wrap:wrap;padding:.5em 0}#r:empty{display:none}#r button{background:#2c2c2e}"
     "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
     "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}</style>"
-    "<h1>Écran <small id=ok></small></h1><form><h2>Affichage</h2><section>";
+    "<h1>Écran <small id=ok></small></h1><form><h2>Pages</h2><section>";
 
 // Une page activable. Arguments : nom (initiale, suite), rang, cochée ou non
 static const char PAGE_ROW[] = "<label>%c%s<input type=checkbox name=p%u%s></label>";
 
-// Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
+// Arguments : alternance cochée ou non, ses deux durées, météo, soleil et lune cochés ou non,
+// luminosité de jour (deux fois), cycle coché
 // ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
 // et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude
 static const char SETTINGS[] =
+    "<label>Alterner Sonos et accueil<input type=checkbox name=alterne%s></label>"
+    "<label>Sonos pendant<input type=number name=tsonos min=5 max=3600 value=%u>s</label>"
+    "<label>Accueil pendant<input type=number name=taccueil min=5 max=3600 value=%u>s</label></section>"
+    "<p>Quand une enceinte joue, la page Sonos prend l'écran. Avec l'alternance, elle le partage avec l'accueil, "
+    "chacun son tour.<h2>Accueil</h2><section>"
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
     "<label>Phase de la lune<input type=checkbox name=lune%s></label></section>"
-    "<p>L'horloge reste toujours affichée."
+    "<p>L'heure et la date restent toujours affichées."
     "<h2>Luminosité</h2><section>"
     "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
     "<label>Cycle automatique<input type=checkbox name=auto%s></label>"
@@ -68,11 +76,12 @@ static const char SETTINGS[] =
     "<h2>Mise à jour du firmware</h2><section><div><input type=file id=f accept=.bin></div>"
     "<div><button type=button onclick=u()>Envoyer</button><span id=m></span></div></section>";
 
-// Arguments : heure locale, soleil et lune, heures et minutes de fonctionnement, cause du démarrage, signal Wi-Fi,
+// Arguments : page affichée, heure locale, soleil et lune, heures et minutes de fonctionnement, cause du
+// démarrage, signal Wi-Fi,
 // RAM interne libre et son minimum, images ratées, luminosité, teinte de nuit, météo, partition,
 // marge des piles web, météo et Sonos
 static const char STATE[] =
-    "<h2>État</h2><section><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
+    "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div>"
     "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
@@ -170,6 +179,14 @@ static void apply(const char *query) {
   if (from >= 0) b.sleep_from = from;
   if (to >= 0) b.sleep_to = to;
   b.deep = param(query, "profonde") != nullptr;
+
+  PluginRotation turn;
+  pluginRotation(turn);
+  turn.enabled = param(query, "alterne") != nullptr;
+  const char *page_s = param(query, "tsonos"), *home_s = param(query, "taccueil");
+  if (page_s && atoi(page_s) > 0) turn.page_seconds = min(atoi(page_s), 3600);
+  if (home_s && atoi(home_s) > 0) turn.home_seconds = min(atoi(home_s), 3600);
+  pluginSetRotation(turn);
   brightnessConfigure(b);
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
@@ -195,7 +212,9 @@ static void sendPage(WiFiClient &c) {
   brightnessSettings(b);
   AstroSettings sky;
   astroSettings(sky);
-  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
+  PluginRotation turn;
+  pluginRotation(turn);
+  add(SETTINGS, turn.enabled ? " checked" : "", turn.page_seconds, turn.home_seconds, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
       b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", b.sleep ? " checked" : "",
       b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, b.deep ? " checked" : "", s.latitude,
       s.longitude);
@@ -235,7 +254,7 @@ static void sendPage(WiFiClient &c) {
     case ESP_RST_BROWNOUT: boot = "baisse de tension"; break;
     default: boot = "autre"; break;
   }
-  add(STATE, t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, boot, (int)WiFi.RSSI(),
+  add(STATE, pluginCurrentName(), t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, boot, (int)WiFi.RSSI(),
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, esp_ota_get_running_partition()->label, stackMargin("web"),

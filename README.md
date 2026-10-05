@@ -6,16 +6,25 @@ Le firmware est écrit pour PlatformIO, sans bibliothèque externe : le pilote d
 
 ![La page horloge, de jour](docs/ecran-jour.png)
 
-*Les deux images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos.*
+*Les images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos.*
 
 ## Ce que l'écran affiche
 
 - **Heure et date**, dans le fuseau horaire de la ville choisie.
 - **Soleil et lune** : heures de lever et de coucher, phase de la lune. Calculés sur la carte, sans réseau.
 - **Météo** : le temps actuel puis les six heures suivantes, avec le risque de pluie. Une ligne annonce la pluie à venir (« Pluie dans 25 min ») ou sa fin. Données [Open-Meteo](https://open-meteo.com), sans compte ni clé.
-- **Sonos** : quand une enceinte du réseau joue, la page affiche la pochette, le titre, l'artiste et la progression.
 
-Chaque bloc s'active ou se désactive, et la page se recentre toute seule pour rester équilibrée.
+La météo, le soleil et la lune s'activent ou se désactivent séparément, et la page se recentre toute seule pour rester équilibrée.
+
+## Sonos
+
+Quand une enceinte du réseau joue, une page prend l'écran : pochette, pièce, titre, artiste, album et progression. La carte interroge directement les enceintes, sans compte ni cloud.
+
+En option, cette page alterne avec l'accueil, chacun pendant une durée réglable : l'heure et la météo restent visibles pendant la musique.
+
+![La page Sonos](docs/ecran-sonos.png)
+
+*La pochette de cet exemple est un dessin fait pour l'image.*
 
 ## La nuit
 
@@ -29,7 +38,7 @@ Chaque bloc s'active ou se désactive, et la page se recentre toute seule pour r
 
 La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Chaque réglage est enregistré dès qu'il change et gardé en flash.
 
-On y trouve aussi une recherche de ville, l'état de la carte (mémoire libre, images ratées, cause du dernier démarrage) et l'envoi d'un nouveau firmware par Wi-Fi.
+On y trouve aussi une recherche de ville, l'état de la carte (page affichée, mémoire libre, images ratées, cause du dernier démarrage) et l'envoi d'un nouveau firmware par Wi-Fi.
 
 La page n'a pas de mot de passe : elle est faite pour rester sur le réseau local.
 
@@ -63,7 +72,7 @@ La page n'a pas de mot de passe : elle est faite pour rester sur le réseau loca
 | --- | --- |
 | `src/lcd.cpp` | Pilote de la dalle RGB : deux images en PSRAM, échange sans déchirement, lignes gardées en RAM interne |
 | `src/gfx.cpp` | Dessin et texte antialiasé, teinte de nuit |
-| `src/plugin.cpp`, `src/plugins/` | Pages : horloge et météo, Sonos, mire de test |
+| `src/plugin.cpp`, `src/plugins/` | Pages et leur alternance : accueil (horloge et météo), Sonos, mire de test |
 | `src/weather.cpp` | Lecture d'Open-Meteo, fuseau horaire du lieu |
 | `src/astro.cpp` | Soleil et lune |
 | `src/sonos.cpp` | Lecture des enceintes Sonos du réseau local |
