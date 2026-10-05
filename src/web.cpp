@@ -434,7 +434,7 @@ static void sendPage(WiFiClient &c) {
     } else if (plugin == &agenda_plugin) {
       add("%s", AGENDA_NOTE);
     } else if (plugin == &air_plugin) {
-      add("</section><p>Les particules fines du capteur, en grand, avec leur niveau par rapport aux repères de l'OMS. "
+      add("</section><p>Les particules fines du capteur, en grand, avec leur niveau sur les dix de l'indice belge BelAQI, d'« Excellent » à « Exécrable ». "
           "Le capteur se règle dans la section Accueil.");
     } else if (plugin == &my_agenda_plugin) {
       for (uint8_t u = 0; u < AGENDA_URLS; u++) {

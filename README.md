@@ -17,7 +17,7 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 - **Cryptomonnaies** : le cours en euros de six cryptos au plus, leurs variations sur 1 heure, 24 heures et 7 jours, et la valeur du portefeuille si des quantités sont saisies. Ces cours sont donnés à titre purement informatif : ils peuvent être en retard ou inexacts, et ne constituent ni un conseil ni une base pour une décision d'achat ou de vente.
 - **Agendas personnels** : les dix prochains événements de trois calendriers au plus, donnés par leur adresse iCal (Google Agenda, par exemple).
 - **Agenda du hackerspace** : les cinq prochains événements du [Liège Hackerspace](https://lghs.be).
-- **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau par rapport aux repères de l'OMS.
+- **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau sur les dix de l'[indice belge de qualité de l'air](https://wallonair.be/fr/en-savoir-plus/indice-de-la-qualite-de-l-air) (BelAQI, seuils horaires).
 
 Les pages activées se succèdent en diaporama, chacune pendant sa durée, avec un fondu en option. Sonos peut aussi garder l'écran pour elle tant que la musique joue.
 
