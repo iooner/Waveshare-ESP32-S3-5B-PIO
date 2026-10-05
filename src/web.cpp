@@ -1,4 +1,5 @@
 #include "web.h"
+#include "air.h"
 #include <Update.h>
 #include <WiFi.h>
 #include <esp_ota_ops.h>
@@ -52,13 +53,16 @@ static const char PAGE_EXCLUSIVE[] = "<label>Prioritaire sur les autres pages<in
 static const char PAGE_SECONDS[] =
     "<label>Durée dans le diaporama<input type=number name=t%u min=5 max=3600 value=%u>s</label>";
 
-// Contenu de l'accueil. Arguments : météo, soleil, lune et espace cochés ou non
+// Contenu de l'accueil. Arguments : météo, soleil, lune, espace et particules cochés ou non, adresse du capteur
 static const char HOME_ROWS[] =
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
     "<label>Phase de la lune<input type=checkbox name=lune%s></label>"
-    "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label></section>"
-    "<p>L'heure et la date restent toujours affichées.";
+    "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label>"
+    "<label>Particules fines<input type=checkbox name=air%s></label>"
+    "<label>Capteur<input name=airhost placeholder='adresse du capteur' value='%s'></label></section>"
+    "<p>L'heure et la date restent toujours affichées. Les particules fines viennent d'un capteur Sensor.Community "
+    "du réseau local : PM2,5 puis PM10, en µg/m³, en haut à gauche.";
 
 static const char SONOS_NOTE[] =
     "</section><p>La page n'apparaît que lorsqu'une enceinte joue. Prioritaire, elle garde alors l'écran pour elle ; "
@@ -141,7 +145,7 @@ static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Particules<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
     "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, agenda %u</b></div></section>";
 
 static const char SCRIPT[] =
@@ -150,7 +154,7 @@ static const char SCRIPT[] =
     // deux champs n'ont de sens qu'ensemble.
     "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
     "ok.textContent=a.ok?'enregistré':'refusé'}catch(e){ok.textContent='carte injoignable'}}"
-    "F.onchange=e=>{let t=e.target;if(t.type=='file')return;if(t.name[0]=='u')save().then(()=>location.reload());else if(t.type!='text'||'qn'.includes(t.name[0]))save()};F.onsubmit=e=>{e.preventDefault();save()};"
+    "F.onchange=e=>{let t=e.target;if(t.type=='file')return;if(t.name[0]=='u')save().then(()=>location.reload());else if(t.type!='text'||'qna'.includes(t.name[0]))save()};F.onsubmit=e=>{e.preventDefault();save()};"
     "F.oninput=e=>{if(e.target.type=='range')e.target.nextElementSibling.textContent=e.target.value+' %'};"
     // La recherche de ville part du navigateur, pas de la carte ; choisir une ville l'enregistre
     "q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
@@ -352,6 +356,21 @@ static void apply(const char *query) {
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
   spaceSetEnabled(param(query, "espace") != nullptr);
+
+  // Capteur de particules : son adresse, réduite à ce qu'une adresse peut contenir
+  static AirSettings air;
+  airSettings(air);
+  air.enabled = param(query, "air") != nullptr;
+  if (param(query, "airhost")) {
+    char host[sizeof(air.host)];
+    decode(param(query, "airhost"), host, sizeof(host));
+    const char *start = strncmp(host, "http://", 7) == 0 ? host + 7 : host;
+    size_t n = 0;
+    while (start[n] && (isalnum((uint8_t)start[n]) || start[n] == '.' || start[n] == '-') && n < sizeof(air.host) - 1) n++;
+    memcpy(air.host, start, n);
+    air.host[n] = 0;
+  }
+  airConfigure(air);
 }
 
 // Octets de pile qu'une tâche n'a jamais utilisés, 0 si elle n'existe pas
@@ -371,6 +390,8 @@ static void sendPage(WiFiClient &c) {
   astroSettings(sky);
   static Crypto crypto;  // hors de la pile, comptée au plus juste ; une seule tâche passe ici
   cryptoGet(crypto);
+  static AirSettings air;
+  airSettings(air);
 
   // Une section par page de l'écran : l'accueil d'abord, puis les autres dans l'ordre du
   // diaporama. La mire de test, qui prend tout l'écran, est rangée avec la maintenance.
@@ -394,7 +415,7 @@ static void sendPage(WiFiClient &c) {
     add(PAGE_SECONDS, i, slide.seconds);
     if (home) {
       add(HOME_ROWS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "",
-          spaceEnabled() ? " checked" : "");
+          spaceEnabled() ? " checked" : "", air.enabled ? " checked" : "", air.host);
     } else if (plugin == &sonos_plugin) {
       add("%s", SONOS_NOTE);
     } else if (plugin == &crypto_plugin) {
@@ -412,6 +433,9 @@ static void sendPage(WiFiClient &c) {
       add("%s", COINS_NOTE);
     } else if (plugin == &agenda_plugin) {
       add("%s", AGENDA_NOTE);
+    } else if (plugin == &air_plugin) {
+      add("</section><p>Les particules fines du capteur, en grand, avec leur niveau par rapport aux repères de l'OMS. "
+          "Le capteur se règle dans la section Accueil.");
     } else if (plugin == &my_agenda_plugin) {
       for (uint8_t u = 0; u < AGENDA_URLS; u++) {
         char name[AGENDA_NAME_SIZE];
@@ -447,6 +471,9 @@ static void sendPage(WiFiClient &c) {
   for (AgendaList list : {AGENDA_LGHS, AGENDA_MINE}) {
     if (agendaProblem(list)[0] && n < (int)sizeof(agenda)) n += snprintf(agenda + n, sizeof(agenda) - n, " ; %s", agendaProblem(list));
   }
+  char dust[40] = "pas de mesure";
+  float pm25, pm10;
+  if (airGet(pm25, pm10)) snprintf(dust, sizeof(dust), "PM2,5 %.1f, PM10 %.1f", pm25, pm10);
   unsigned long minutes = esp_timer_get_time() / 60000000;
   time_t now = time(nullptr);
   struct tm t;
@@ -481,7 +508,7 @@ static void sendPage(WiFiClient &c) {
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
-      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, agenda, spacePeople(), esp_ota_get_running_partition()->label, stackMargin("web"),
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, agenda, spacePeople(), dust, esp_ota_get_running_partition()->label, stackMargin("web"),
       stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("agenda"));
   add("%s", FOOTER);
   add("%s", SCRIPT);

@@ -124,8 +124,16 @@ def astronaut():
     return img
 
 
+def particles():
+    """Poussières en suspension : quelques grains de tailles diverses."""
+    img = canvas()
+    for x, y, r in ((18, 20, 9), (44, 14, 5), (48, 38, 10), (22, 46, 6), (34, 30, 3.5), (36, 56, 4)):
+        disc(img, x, y, r)
+    return img
+
+
 small_cloud = cloud(ox=9, oy=14, k=0.88)
-SPACE = [("a", "astronaute", astronaut)]
+SPACE = [("a", "astronaute", astronaut), ("b", "particules", particles)]
 WEATHER = [
     ("a", "soleil", lambda: sun(32, 32, 11, 18, 24)),
     ("b", "lune", lambda: moon(29, 33, 19)),

@@ -71,5 +71,6 @@ extern const Plugin sonos_plugin;      // page : morceau en cours sur les encein
 extern const Plugin crypto_plugin;     // page : cours des cryptomonnaies choisies et valeur du portefeuille
 extern const Plugin agenda_plugin;     // page : prochains événements du Liège Hackerspace
 extern const Plugin my_agenda_plugin;  // page : prochains événements des agendas personnels
+extern const Plugin air_plugin;        // page : particules fines mesurées par le capteur de la maison
 extern const Plugin clock_plugin;      // page plein écran : heure et date en grand, météo des heures à venir
 extern const Plugin demo_plugin;       // page : mire de test (couleurs, texte, carré animé, FPS)

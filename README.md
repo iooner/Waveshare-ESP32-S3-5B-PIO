@@ -12,11 +12,12 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 | <img src="docs/ecran-crypto.png" width="400"><br>**Cryptomonnaies** | <img src="docs/ecran-agendas.png" width="400"><br>**Agendas personnels** |
 | <img src="docs/ecran-agenda.png" width="400"><br>**Agenda du hackerspace** | <img src="docs/back-office.png" width="210"><br>**Back office** |
 
-- **Accueil** : heure et date, météo des six heures à venir avec annonce de pluie, lever et coucher du soleil, phase de la lune, nombre de personnes dans l'espace. Chaque élément se désactive, et la page se recentre.
+- **Accueil** : heure et date, météo des six heures à venir avec annonce de pluie, lever et coucher du soleil, phase de la lune, nombre de personnes dans l'espace, particules fines d'un capteur de la maison. Chaque élément se désactive, et la page se recentre.
 - **Sonos** : le morceau en cours quand une enceinte du réseau joue. La carte interroge les enceintes directement, sans compte ni cloud. La pochette est celle que l'enceinte annonce pour le morceau : la carte la télécharge sur le serveur d'images de Spotify, en 300 × 300. Un morceau venu d'une autre source (radio, bibliothèque locale) s'affiche sans pochette.
 - **Cryptomonnaies** : le cours en euros de six cryptos au plus, leurs variations sur 1 heure, 24 heures et 7 jours, et la valeur du portefeuille si des quantités sont saisies. Ces cours sont donnés à titre purement informatif : ils peuvent être en retard ou inexacts, et ne constituent ni un conseil ni une base pour une décision d'achat ou de vente.
 - **Agendas personnels** : les dix prochains événements de trois calendriers au plus, donnés par leur adresse iCal (Google Agenda, par exemple).
 - **Agenda du hackerspace** : les cinq prochains événements du [Liège Hackerspace](https://lghs.be).
+- **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau par rapport aux repères de l'OMS.
 
 Les pages activées se succèdent en diaporama, chacune pendant sa durée, avec un fondu en option. Sonos peut aussi garder l'écran pour elle tant que la musique joue.
 
@@ -66,6 +67,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | Agenda du hackerspace | `lghs.be` (HTTPS) | 1 heure | 10 minutes | toujours |
 | Agendas personnels | les adresses données (HTTPS) | 1 heure, chacun | 10 minutes | pour chaque adresse |
 | Personnes dans l'espace | `corquaid.github.io` (HTTPS) | 6 heures | 10 minutes | si la case est cochée |
+| Particules fines | le capteur du réseau local (HTTP) | 3 minutes | 30 secondes | si la case est cochée et l'adresse donnée |
 | État des enceintes Sonos | réseau local, port 1400 | 2 secondes en lecture, 5 sinon | à la lecture suivante | toujours |
 | Recherche des enceintes | réseau local (SSDP) | 10 minutes | à la lecture suivante | toujours |
 | Pochette du morceau | `i.scdn.co` (HTTP) | à chaque changement de pochette | pas de pochette | en lecture |
@@ -86,7 +88,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | `src/lcd.cpp` | Pilote de la dalle RGB : échange d'images sans déchirement, lignes gardées en RAM interne, fondu |
 | `src/gfx.cpp` | Dessin et texte antialiasé, teinte de nuit |
 | `src/plugin.cpp`, `src/plugins/` | Pages et diaporama |
-| `src/weather.cpp`, `src/astro.cpp`, `src/space.cpp` | Météo et fuseau horaire, soleil et lune, personnes dans l'espace |
+| `src/weather.cpp`, `src/astro.cpp`, `src/space.cpp`, `src/air.cpp` | Météo et fuseau horaire, soleil et lune, personnes dans l'espace, capteur de particules |
 | `src/sonos.cpp` | Enceintes Sonos du réseau local |
 | `src/crypto.cpp` | Cours des cryptomonnaies |
 | `src/agenda.cpp`, `src/ical.cpp` | Agendas : lecture des calendriers au fil de l'eau, récurrences comprises |

@@ -2,6 +2,7 @@
 // plein écran (heure et date en grand, météo en dessous). L'heure vient du réseau (net.h), la
 // météo de weather.h, le soleil et la lune d'astro.h.
 #include <time.h>
+#include "air.h"
 #include "astro.h"
 #include "fonts/font_clock.h"
 #include "fonts/font_sans24.h"
@@ -138,9 +139,44 @@ static void spaceUpdate() {
   gfxTextBox(SPACE_X + 28, SPACE_Y, SPACE_W - 28, text, font_sans24, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
 }
 
+// Particules fines du capteur de la maison : dans le coin en haut à gauche, un pictogramme et les
+// PM2,5, puis les PM10 dessous. En blanc, pour la même raison que le compteur de l'espace.
+#define AIR_X  MARGIN_X
+#define AIR_W  64  // jusqu'au premier chiffre de l'heure
+
+static char shown_air[16];  // les deux valeurs affichées, vide = rien
+
+// Une décimale sous 10, aucune au-delà : la place est comptée
+static void airText(float v, char *out, size_t cap) {
+  if (v >= 99.5f) strlcpy(out, "99+", cap);
+  else if (v >= 9.95f) snprintf(out, cap, "%d", (int)lroundf(v));
+  else {
+    snprintf(out, cap, "%.1f", v);
+    if (char *dot = strchr(out, '.')) *dot = ',';
+  }
+}
+
+static void airUpdate() {
+  float pm25, pm10;
+  char fine[6] = "", coarse[6] = "", both[16] = "";
+  if (airGet(pm25, pm10)) {
+    airText(pm25, fine, sizeof(fine));
+    airText(pm10, coarse, sizeof(coarse));
+    snprintf(both, sizeof(both), "%s %s", fine, coarse);
+  }
+  if (strcmp(both, shown_air) == 0) return;
+  strlcpy(shown_air, both, sizeof(shown_air));
+  gfxFillRect(AIR_X, SPACE_Y, AIR_W, 2 * font_sans24.line_height, COLOR_BG);
+  if (!both[0]) return;
+  gfxText(AIR_X, SPACE_Y + 3, "b", font_space28, COLOR_TEXT, COLOR_BG);
+  gfxTextBox(AIR_X + 28, SPACE_Y, AIR_W - 28, fine, font_sans24, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
+  gfxTextBox(AIR_X + 28, SPACE_Y + font_sans24.line_height, AIR_W - 28, coarse, font_sans24, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
+}
+
 // Plus rien de ce qui est noté comme affiché ne l'est : tout sera redessiné, textes vides compris
 static void forgetShown() {
   shown_space = INT_MIN;
+  shown_air[0] = 1;
   memset(shown_time, 0, sizeof(shown_time));
   shown_date[0] = shown_sky[0] = shown_alert[0] = 1;
   shown_weather = UINT32_MAX;
@@ -327,6 +363,7 @@ static void bigUpdate() {
   }
   skyUpdate();
   spaceUpdate();
+  airUpdate();
   weatherUpdate();
 }
 
@@ -339,6 +376,7 @@ extern const Plugin clock_bar_plugin = {"barre", false, nullptr, nullptr, barSho
 static void bigBegin() {
   weatherBegin();
   spaceBegin();
+  airBegin();
 }
 
 extern const Plugin clock_plugin = {"horloge", true, bigBegin, nullptr, bigShow, bigUpdate, nullptr};

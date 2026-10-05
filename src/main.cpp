@@ -10,7 +10,7 @@
 // Pages, dans l'ordre du diaporama ; l'accueil en dernier. Elles se règlent dans le back office
 // (web.h) ; la mire de test est désactivée au départ.
 static const Plugin *const pages[] = {&demo_plugin,   &sonos_plugin,     &crypto_plugin,
-                                       &agenda_plugin, &my_agenda_plugin, &clock_plugin};
+                                       &agenda_plugin, &my_agenda_plugin, &air_plugin,   &clock_plugin};
 
 void setup() {
   Serial.begin(115200);
