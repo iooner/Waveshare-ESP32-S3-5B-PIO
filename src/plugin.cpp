@@ -10,7 +10,9 @@ static uint8_t count;
 static int8_t current = -1;
 static uint8_t drawn_night;      // teinte de nuit de ce qui est à l'écran
 static PluginSlide slides[MAX_PAGES];  // modifiés par le back office, depuis une autre tâche
-static uint8_t slide;         // diaporama : la page dont c'est le tour
+#define MAX_STEPS  16
+static uint8_t order[MAX_STEPS], order_count;  // ordre de passage du diaporama : des rangs de pages
+static uint8_t slide;         // diaporama : le pas en cours dans cet ordre
 static uint32_t turn_at;      // début de ce tour
 static uint8_t was_showable;  // pages qui avaient quelque chose à montrer à l'image précédente, un bit chacune
 static bool fade_on = true;   // fondu entre les pages, réglé dans le back office
@@ -46,6 +48,36 @@ static void showPage(uint8_t index) {
   pages[index]->show();
 }
 
+// Nom d'une page dans l'ordre de passage : « accueil » pour la dernière
+static const char *orderName(uint8_t index) {
+  return index == count - 1 ? "accueil" : pages[index]->name;
+}
+
+// Lit un ordre de passage. Les noms inconnus sont ignorés ; sans aucun nom valable, c'est l'ordre de la liste.
+static void parseOrder(const char *names) {
+  uint8_t n = 0;
+  for (const char *p = names; *p && n < MAX_STEPS;) {
+    size_t len = strcspn(p, ",");
+    while (len && *p == ' ') p++, len--;
+    size_t word = len;
+    while (word && p[word - 1] == ' ') word--;
+    for (uint8_t i = 0; i < count; i++) {
+      // La mire de test ne fait pas partie du diaporama
+      if (!pages[i]->optional && strlen(orderName(i)) == word && strncasecmp(p, orderName(i), word) == 0) order[n++] = i;
+    }
+    p += len;
+    if (*p == ',') p++;
+  }
+  if (n == 0) {
+    // Toutes les pages, sauf la mire de test, qui ne fait pas partie du diaporama
+    for (uint8_t i = 0; i < count; i++) {
+      if (!pages[i]->optional) order[n++] = i;
+    }
+  }
+  order_count = n;
+  slide = 0;
+}
+
 void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
   bar = b;
   pages = p;
@@ -62,7 +94,9 @@ void pluginsBegin(const Plugin *b, const Plugin *const *p, uint8_t n) {
     slides[i].exclusive = !home && prefs.getBool(key('x', i), page->exclusive && !(was_exclusive && alternated));
     slides[i].seconds = prefs.getUShort(key('t', i), seconds);
   }
-  slide = count - 1;
+  char names[96] = "";
+  if (prefs.isKey("ordre")) prefs.getString("ordre", names, sizeof(names));
+  parseOrder(names);
   fade_on = prefs.getBool("fondu", fade_on);
   prefs.end();
 
@@ -93,17 +127,29 @@ void pluginsLoop() {
   if (wanted < count) {
     turn_at = millis();  // après une page exclusive, le diaporama reprend par un tour complet
   } else {
-    uint8_t fresh = now_showable & ~was_showable;
-    if (fresh) {
-      slide = __builtin_ctz(fresh);
+    // Pages qui viennent d'avoir quelque chose à montrer : la première qui a sa place dans l'ordre passe tout de suite
+    uint8_t fresh = now_showable & ~was_showable, jump = order_count;
+    for (uint8_t i = 0; i < order_count && jump == order_count; i++) {
+      if (fresh >> order[i] & 1) jump = i;
+    }
+    uint8_t page = order[slide];
+    if (jump < order_count) {
+      slide = jump;
       turn_at = millis();
-    } else if (!(now_showable >> slide & 1) ||
-               (now_showable != 1 << slide && millis() - turn_at >= slides[slide].seconds * 1000UL)) {
-      do slide = (slide + 1) % count;
-      while (!(now_showable >> slide & 1));
+    } else if (!(now_showable >> page & 1) ||
+               (now_showable != 1 << page && millis() - turn_at >= slides[page].seconds * 1000UL)) {
+      // Pas suivant dont la page a quelque chose à montrer ; s'il n'y en a aucun, on ne bouge pas
+      for (uint8_t i = 1; i <= order_count; i++) {
+        uint8_t next = (slide + i) % order_count;
+        if (now_showable >> order[next] & 1) {
+          slide = next;
+          break;
+        }
+      }
       turn_at = millis();
     }
-    wanted = slide;
+    // Aucune page de l'ordre n'a rien à montrer : l'accueil
+    wanted = now_showable >> order[slide] & 1 ? order[slide] : count - 1;
   }
   was_showable = now_showable;
 
@@ -127,6 +173,28 @@ void pluginsLoop() {
 
 uint8_t pluginCount() {
   return count;
+}
+
+void pluginOrder(char *out, size_t cap) {
+  out[0] = 0;
+  for (uint8_t i = 0; i < order_count; i++) {
+    if (i) strlcat(out, ", ", cap);
+    strlcat(out, orderName(order[i]), cap);
+  }
+}
+
+void pluginSetOrder(const char *names) {
+  char before[128], after[128];
+  pluginOrder(before, sizeof(before));
+  parseOrder(names);
+  pluginOrder(after, sizeof(after));
+  if (strcmp(before, after) == 0) return;
+  // Un ordre vide est gardé vide : l'ordre de la liste, même si des pages s'ajoutent plus tard
+  bool empty = names[strspn(names, " ,")] == 0;
+  Preferences prefs;
+  prefs.begin("pages");
+  prefs.putString("ordre", empty ? "" : after);
+  prefs.end();
 }
 
 bool pluginFade() {

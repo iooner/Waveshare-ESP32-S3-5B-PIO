@@ -35,27 +35,44 @@ static char shown_time[9], shown_date[48];
 
 // --- Barre ---
 #define BAR_TIME_W  200  // largeur réservée à "HH:MM"
+#define BAR_AIR_W   240  // qualité de l'air, entre la date et l'heure : "Assez mauvais" fait 225 pixels
+#define BAR_DATE_W  (CONTENT_W - BAR_TIME_W - BAR_AIR_W - 16)  // la date la plus longue en fait 452
 #define BAR_TIME_Y  ((BAR_HEIGHT - 67) / 2)
 #define BAR_DATE_Y  ((BAR_HEIGHT - 45) / 2 + 4)
+
+static int8_t shown_bar_air;  // niveau de qualité de l'air affiché dans la barre, -1 = rien
 
 static void barUpdate() {
   struct tm t;
   char time_text[9] = "", date_text[48];
   if (now(t, date_text, sizeof(date_text))) snprintf(time_text, sizeof(time_text), "%02d:%02d", t.tm_hour, t.tm_min);
 
+  // Qualité de l'air, dans la couleur de son niveau. La barre porte alors deux couleurs de texte
+  // sur les mêmes lignes : tout y est dessiné avec l'antialiasing réduit (gfx.h).
+  uint8_t level;
+  int8_t air = airBarLevel(level) ? level : -1;
+  if ((air >= 0) != (shown_bar_air >= 0)) shown_time[0] = shown_date[0] = 1;
+  gfxSetCoarse(air >= 0);
+  if (air != shown_bar_air) {
+    gfxTextBox(MARGIN_X + BAR_DATE_W + 16, BAR_DATE_Y, BAR_AIR_W, air >= 0 ? AIR_LEVEL[air].name : "", font_sans32,
+               air >= 0 ? AIR_LEVEL[air].color : COLOR_TEXT, COLOR_BG, GFX_RIGHT);
+    shown_bar_air = air;
+  }
   if (strcmp(time_text, shown_time) != 0) {
     gfxTextBox(LCD_WIDTH - MARGIN_X - BAR_TIME_W, BAR_TIME_Y, BAR_TIME_W, time_text, font_sans48, COLOR_TEXT, COLOR_BG,
                GFX_RIGHT);
     strlcpy(shown_time, time_text, sizeof(shown_time));
   }
   if (strcmp(date_text, shown_date) != 0) {
-    gfxTextBox(MARGIN_X, BAR_DATE_Y, CONTENT_W - BAR_TIME_W, date_text, font_sans32, COLOR_TEXT, COLOR_BG);
+    gfxTextBox(MARGIN_X, BAR_DATE_Y, BAR_DATE_W, date_text, font_sans32, COLOR_TEXT, COLOR_BG);
     strlcpy(shown_date, date_text, sizeof(shown_date));
   }
+  gfxSetCoarse(false);
 }
 
 static void barShow() {
   shown_time[0] = shown_date[0] = 1;  // différent de tout texte : force le dessin
+  shown_bar_air = -2;
   barUpdate();
 }
 

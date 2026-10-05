@@ -38,37 +38,44 @@ static const char HEAD[] =
     "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}input[name^=n]:not([type]){flex:0 0 5em}"
     "input[type=number]{width:4.5em;text-align:right}input[type=time],input[type=number]{font:inherit;color:#fff;"
     "background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
-    "button{background:#0a84ff}#r,#cr{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}"
-    "#r button,#cr button,label button{background:#2c2c2e}"
+    "button{background:#0a84ff}#r,#cr,#ol,#on{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}"
+    "#r button,#cr button,#on button,label button{background:#2c2c2e}#ol button{background:#30d158;color:#000}"
     "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
     "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}"
     "a{color:#0a84ff;text-decoration:none}footer{text-align:center;color:#999;font-size:.8em;line-height:1.9;"
     "margin:3em 0 1.5em}</style><h1>Écran <small id=ok></small></h1><form>";
 
-// Section d'une page de l'écran. Arguments : son titre ; puis son rang et cochée ou non ; son rang
-// et la durée de son tour.
-static const char PAGE_HEAD[] = "<h2>%s</h2><section>";
-static const char PAGE_ON[] = "<label>Affichée<input type=checkbox name=p%u%s></label>";
-static const char PAGE_EXCLUSIVE[] = "<label>Prioritaire sur les autres pages<input type=checkbox name=x%u%s></label>";
-static const char PAGE_SECONDS[] =
-    "<label>Durée dans le diaporama<input type=number name=t%u min=5 max=3600 value=%u>s</label>";
-
-// Contenu de l'accueil. Arguments : météo, soleil, lune, espace et particules cochés ou non, adresse du capteur
-static const char HOME_ROWS[] =
+// Diaporama. L'ordre de passage se compose en cliquant : les pastilles du haut sont l'ordre en
+// place (un clic en retire une), les boutons du dessous ajoutent une page à la suite.
+// Argument : l'ordre en place, tel qu'il est envoyé à la carte.
+static const char SHOW_HEAD[] =
+    "<h2>Diaporama</h2><section><div id=ol></div><div id=on>";
+static const char SHOW_ADD[] = "<button type=button data-n=%s onclick=oa(dataset.n)>+ %s</button>";  // nom de la page, puis son libellé
+static const char SHOW_ORDER[] = "</div><input type=hidden name=ordre value='%s'>";
+// Arguments : nom (initiale, suite), rang, puis la durée de son tour ou cochée ou non
+static const char PAGE_SECONDS[] = "<label>%c%s pendant<input type=number name=t%u min=5 max=3600 value=%u>s</label>";
+static const char PAGE_EXCLUSIVE[] = "<label>%c%s prioritaire<input type=checkbox name=x%u%s></label>";
+// Arguments : fondu coché ou non, puis météo, soleil, lune, espace et particules cochés ou non,
+// latitude, longitude
+static const char SHOW_TAIL[] =
+    "<label>Fondu entre les pages<input type=checkbox name=fondu%s></label></section>"
+    "<p>En haut, l'ordre de passage : cliquer sur une page du dessous l'ajoute à la suite, cliquer sur une pastille "
+    "la retire. Une page peut revenir plusieurs fois ; une page absente ne passe pas. Vide, toutes les pages passent."
+    "<p>Une page sans rien à montrer est sautée : Sonos quand rien ne joue, la crypto sans crypto choisie, un agenda "
+    "vide, l'air sans capteur. Sonos prioritaire garde l'écran pour elle tant qu'une enceinte joue."
+    "<h2>Accueil</h2><section>"
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
     "<label>Phase de la lune<input type=checkbox name=lune%s></label>"
     "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label>"
-    "<label>Particules fines<input type=checkbox name=air%s></label>"
-    "<label>Capteur<input name=airhost placeholder='adresse du capteur' value='%s'></label></section>"
-    "<p>L'heure et la date restent toujours affichées. Les particules fines viennent d'un capteur Sensor.Community "
-    "du réseau local : PM2,5 puis PM10, en µg/m³, en haut à gauche.";
-
-static const char SONOS_NOTE[] =
-    "</section><p>La page n'apparaît que lorsqu'une enceinte joue. Prioritaire, elle garde alors l'écran pour elle ; "
-    "sinon elle prend son tour dans le diaporama.";
-
-static const char COINS_HEAD[] =
+    "<label>Particules fines<input type=checkbox name=air%s></label></section>"
+    "<p>Ce que la page d'accueil affiche autour de l'heure et de la date."
+    "<h2>Lieu de la météo et de l'heure</h2><section>"
+    "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
+    "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
+    "<label>Longitude<input id=lon name=lon value=%.4f></label>"
+    "<div><button>Enregistrer le lieu</button></div></section>"
+    "<h2>Cryptomonnaies</h2><section>"
     "<div><input id=cq placeholder='Chercher une crypto'><button type=button onclick=cs()>Chercher</button></div>"
     "<div id=cr></div>";
 
@@ -78,10 +85,10 @@ static const char COIN_ROW[] =
     "<input type=hidden name=s%u value='%s'><button type=button onclick=cd(%u)>Retirer</button></label>";
 
 static const char COINS_NOTE[] =
-    "</section><p>La page apparaît dès qu'une crypto est choisie. Sans quantité, elle affiche le cours et ses "
-    "variations sur 1 heure, 24 heures et 7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le "
-    "total du portefeuille. Les quantités restent sur la carte. Cours en euros, fournis par CoinGecko, "
-    "à titre purement informatif : ils peuvent être en retard ou inexacts.";
+    "</section><p>Sans quantité, la page crypto affiche le cours et ses variations sur 1 heure, 24 heures et "
+    "7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le total du portefeuille. Les quantités "
+    "restent sur la carte. Cours en euros, fournis par CoinGecko, à titre purement informatif : ils peuvent être "
+    "en retard ou inexacts.<h2>Mes agendas</h2><section>";
 
 // Un agenda personnel : son nom, puis son adresse. L'adresse n'est jamais renvoyée au navigateur :
 // son champ reste vide, son texte grisé dit s'il y en a une. Arguments : rang (à partir de 1),
@@ -90,23 +97,23 @@ static const char URL_ROW[] =
     "<label><input name=n%u placeholder='nom' value='%s' maxlength=20><input name=u%u placeholder='%s' autocomplete=off>"
     "<button type=button onclick=ud(%u)>Retirer</button></label>";
 
-static const char URLS_NOTE[] =
-    "</section><p>Les prochains événements de vos agendas, fondus en une liste ; le nom donné à un agenda est "
-    "affiché avec ses événements. Pour un agenda Google : Paramètres de "
-    "l'agenda, Intégrer l'agenda, puis copier son adresse au format iCal ici. L'adresse publique suffit pour un "
-    "agenda public ; pour un agenda privé, il faut l'adresse secrète."
-    "<p>Une adresse secrète donne accès à tout l'agenda. Elle est gardée sur la carte et n'est plus affichée ici "
-    "une fois enregistrée.";
-
-static const char AGENDA_NOTE[] = "</section><p>Les prochains événements du Liège Hackerspace, lus dans son calendrier public.";
-
-// Réglages communs. Arguments : fondu coché ou non, luminosité de jour (deux fois), cycle coché
-// ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
-// et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude,
-// mire cochée ou non
+// Arguments : adresse du capteur, niveau dans la barre coché ou non, luminosité de jour (deux
+// fois), cycle coché ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée
+// ou non, heures et minutes d'extinction puis de rallumage, veille profonde cochée ou non, rang de
+// la mire, cochée ou non
 static const char SETTINGS[] =
-    "<h2>Diaporama</h2><section><label>Fondu entre les pages<input type=checkbox name=fondu%s></label></section>"
-    "<p>Les pages affichées se succèdent, chacune pendant sa durée."
+    "</section><p>Les prochains événements de vos agendas, fondus en une liste ; le nom donné à un agenda est "
+    "affiché avec ses événements. Pour un agenda Google : Paramètres de l'agenda, Intégrer l'agenda, puis copier "
+    "son adresse au format iCal ici. L'adresse publique suffit pour un agenda public ; pour un agenda privé, il "
+    "faut l'adresse secrète."
+    "<p>Une adresse secrète donne accès à tout l'agenda. Elle est gardée sur la carte et n'est plus affichée ici "
+    "une fois enregistrée. L'agenda du Liège Hackerspace, lui, n'a rien à régler."
+    "<h2>Capteur d'air</h2><section>"
+    "<label>Adresse<input name=airhost placeholder='adresse du capteur' value='%s'></label>"
+    "<label>Niveau dans la barre du haut<input type=checkbox name=airbar%s></label></section>"
+    "<p>Un capteur Sensor.Community du réseau local. Ses particules fines (PM2,5 et PM10, en µg/m³) s'affichent en "
+    "petit sur l'accueil et en grand sur la page air, avec leur niveau sur les dix de l'indice belge BelAQI. La "
+    "barre du haut des autres pages peut en donner le niveau en un mot : la moyenne des deux."
     "<h2>Luminosité</h2><section>"
     "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
     "<label>Cycle automatique<input type=checkbox name=auto%s></label>"
@@ -122,11 +129,6 @@ static const char SETTINGS[] =
     "<p>L'écran s'éteint tout à fait entre les deux heures, chaque jour. En veille profonde, la carte s'arrête "
     "aussi pour consommer moins : cette page ne répond plus jusqu'à l'heure du rallumage. Pour la joindre avant, "
     "appuyer sur son bouton reset : elle reste éveillée 5 minutes."
-    "<h2>Lieu de la météo et de l'heure</h2><section>"
-    "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
-    "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
-    "<label>Longitude<input id=lon name=lon value=%.4f></label>"
-    "<div><button>Enregistrer le lieu</button></div></section>"
     "<h2>Maintenance</h2><section><label>Mire de test<input type=checkbox name=p%u%s></label>"
     "<div><input type=file id=f accept=.bin></div>"
     "<div><button type=button onclick=u()>Envoyer le firmware</button><span id=m></span></div>"
@@ -150,6 +152,12 @@ static const char STATE[] =
 
 static const char SCRIPT[] =
     "<script>let F=document.forms[0];"
+    // Ordre du diaporama : O en est la liste ; chaque changement la redessine et l'enregistre
+    "let O=F.ordre.value.split(',').map(x=>x.trim()).filter(x=>x);"
+    "function od(){ol.textContent=O.length?'':'toutes les pages, dans l\\'ordre du dessous';O.forEach((n,i)=>{"
+    "let b=document.createElement('button');b.type='button';let a=on.querySelector('[data-n='+n+']');b.textContent=(i+1)+'. '+(a?a.textContent.slice(2):n)+' ×';"
+    "b.onclick=()=>{O.splice(i,1);os()};ol.append(b)})}"
+    "function os(){F.ordre.value=O.join(',');od();save()}function oa(n){if(O.length<16){O.push(n);os()}}"
     // Tout réglage part dès qu'il change, sans recharger la page. Le lieu attend son bouton : ses
     // deux champs n'ont de sens qu'ensemble.
     "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
@@ -183,7 +191,7 @@ static const char SCRIPT[] =
     "function u(){if(!f.files[0])return;let x=new XMLHttpRequest();x.open('POST','/update');"
     "x.upload.onprogress=e=>m.textContent=Math.round(100*e.loaded/e.total)+' %';"
     "x.onload=()=>{m.textContent=x.responseText;setTimeout(()=>location.reload(),9000)};"
-    "x.onerror=()=>m.textContent='Envoi interrompu';x.send(f.files[0])}"
+    "x.onerror=()=>m.textContent='Envoi interrompu';x.send(f.files[0])}od();"
     // Redémarrage : demandé par un POST, pour qu'un simple lien ou un préchargement ne le déclenche pas
     "async function rb(){if(!confirm('Redémarrer la carte ?'))return;m.textContent='Redémarrage...';"
     "try{await fetch('/reboot',{method:'POST'})}catch(e){}setTimeout(()=>location.reload(),8000)}</script>";
@@ -268,8 +276,9 @@ static void apply(const char *query) {
     char name[8];
     PluginSlide slide;
     pluginSlide(i, slide);
+    // Seule la mire de test se coche ; les autres pages passent dès qu'elles sont dans l'ordre du diaporama
     snprintf(name, sizeof(name), "p%u", i);
-    slide.enabled = param(query, name) != nullptr;
+    slide.enabled = !pluginAt(i)->optional || param(query, name) != nullptr;
     snprintf(name, sizeof(name), "x%u", i);
     slide.exclusive = pluginAt(i)->optional ? pluginAt(i)->exclusive : param(query, name) != nullptr;
     snprintf(name, sizeof(name), "t%u", i);
@@ -279,6 +288,14 @@ static void apply(const char *query) {
   }
 
   pluginSetFade(param(query, "fondu") != nullptr);
+  if (param(query, "ordre")) {
+    char names[128];
+    decode(param(query, "ordre"), names, sizeof(names));
+    for (char *p = names; *p; p++) {
+      if (!isalnum((uint8_t)*p) && *p != ',' && *p != ' ') *p = ' ';
+    }
+    pluginSetOrder(names);
+  }
 
   // Agendas personnels : un champ vide ne change rien, l'adresse en place n'étant jamais renvoyée
   for (uint8_t u = 0; u < AGENDA_URLS; u++) {
@@ -361,6 +378,7 @@ static void apply(const char *query) {
   static AirSettings air;
   airSettings(air);
   air.enabled = param(query, "air") != nullptr;
+  air.bar = param(query, "airbar") != nullptr;
   if (param(query, "airhost")) {
     char host[sizeof(air.host)];
     decode(param(query, "airhost"), host, sizeof(host));
@@ -393,65 +411,61 @@ static void sendPage(WiFiClient &c) {
   static AirSettings air;
   airSettings(air);
 
-  // Une section par page de l'écran : l'accueil d'abord, puis les autres dans l'ordre du
-  // diaporama. La mire de test, qui prend tout l'écran, est rangée avec la maintenance.
+  // Diaporama : les pages qu'on peut y mettre, l'ordre en place, puis la durée de chacune. La
+  // mire de test, qui prend tout l'écran, est rangée avec la maintenance.
   uint8_t count = pluginCount(), test_page = count;
-  for (uint8_t k = 0; k < count; k++) {
-    uint8_t i = k == 0 ? count - 1 : k - 1;
+  char order[128], title[32];
+  pluginOrder(order, sizeof(order));
+  auto titleOf = [&](uint8_t i) {
     const Plugin *plugin = pluginAt(i);
-    bool home = i == count - 1;
-    if (plugin->optional) {
+    strlcpy(title, i == count - 1 ? "accueil" : plugin->label ? plugin->label : plugin->name, sizeof(title));
+    title[0] = toupper(title[0]);
+  };
+  add("%s", SHOW_HEAD);
+  for (uint8_t k = 0; k < count; k++) {
+    uint8_t i = k == 0 ? count - 1 : k - 1;  // l'accueil d'abord
+    if (pluginAt(i)->optional) {
       test_page = i;
       continue;
     }
+    titleOf(i);
+    add(SHOW_ADD, i == count - 1 ? "accueil" : pluginAt(i)->name, title);
+  }
+  add(SHOW_ORDER, order);
+  for (uint8_t k = 0; k < count; k++) {
+    uint8_t i = k == 0 ? count - 1 : k - 1;
+    const Plugin *plugin = pluginAt(i);
+    if (plugin->optional) continue;
     PluginSlide slide;
     pluginSlide(i, slide);
-    char title[32];
-    strlcpy(title, home ? "accueil" : plugin->label ? plugin->label : plugin->name, sizeof(title));
-    title[0] = toupper(title[0]);
-    add(PAGE_HEAD, title);
-    if (!home) add(PAGE_ON, i, slide.enabled ? " checked" : "");
-    if (plugin->exclusive) add(PAGE_EXCLUSIVE, i, slide.exclusive ? " checked" : "");
-    add(PAGE_SECONDS, i, slide.seconds);
-    if (home) {
-      add(HOME_ROWS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "",
-          spaceEnabled() ? " checked" : "", air.enabled ? " checked" : "", air.host);
-    } else if (plugin == &sonos_plugin) {
-      add("%s", SONOS_NOTE);
-    } else if (plugin == &crypto_plugin) {
-      add("%s", COINS_HEAD);
-      for (uint8_t c = 0; c < crypto.count; c++) {
-        // Quantité sans zéros inutiles, vide si aucune
-        char held[24] = "";
-        if (crypto.coins[c].quantity > 0) {
-          int n = snprintf(held, sizeof(held), "%.8f", crypto.coins[c].quantity);
-          while (n > 1 && held[n - 1] == '0') held[--n] = 0;
-          if (held[n - 1] == '.') held[--n] = 0;
-        }
-        add(COIN_ROW, crypto.coins[c].symbol, c, held, c, crypto.coins[c].id, c, crypto.coins[c].symbol, c);
-      }
-      add("%s", COINS_NOTE);
-    } else if (plugin == &agenda_plugin) {
-      add("%s", AGENDA_NOTE);
-    } else if (plugin == &air_plugin) {
-      add("</section><p>Les particules fines du capteur, en grand, avec leur niveau sur les dix de l'indice belge BelAQI, d'« Excellent » à « Exécrable ». "
-          "Le capteur se règle dans la section Accueil.");
-    } else if (plugin == &my_agenda_plugin) {
-      for (uint8_t u = 0; u < AGENDA_URLS; u++) {
-        char name[AGENDA_NAME_SIZE];
-        agendaName(u, name, sizeof(name));
-        add(URL_ROW, u + 1, name, u + 1, agendaHasUrl(u) ? "adresse enregistrée" : "adresse iCal (https://...)", u + 1);
-      }
-      add("%s", URLS_NOTE);
-    } else {
-      add("</section>");
+    titleOf(i);
+    add(PAGE_SECONDS, title[0], title + 1, i, slide.seconds);
+    if (plugin->exclusive) add(PAGE_EXCLUSIVE, title[0], title + 1, i, slide.exclusive ? " checked" : "");
+  }
+  add(SHOW_TAIL, pluginFade() ? " checked" : "", s.enabled ? " checked" : "", sky.sun ? " checked" : "",
+      sky.moon ? " checked" : "", spaceEnabled() ? " checked" : "", air.enabled ? " checked" : "", s.latitude, s.longitude);
+
+  for (uint8_t c = 0; c < crypto.count; c++) {
+    // Quantité sans zéros inutiles, vide si aucune
+    char held[24] = "";
+    if (crypto.coins[c].quantity > 0) {
+      int n = snprintf(held, sizeof(held), "%.8f", crypto.coins[c].quantity);
+      while (n > 1 && held[n - 1] == '0') held[--n] = 0;
+      if (held[n - 1] == '.') held[--n] = 0;
     }
+    add(COIN_ROW, crypto.coins[c].symbol, c, held, c, crypto.coins[c].id, c, crypto.coins[c].symbol, c);
+  }
+  add("%s", COINS_NOTE);
+  for (uint8_t u = 0; u < AGENDA_URLS; u++) {
+    char name[AGENDA_NAME_SIZE];
+    agendaName(u, name, sizeof(name));
+    add(URL_ROW, u + 1, name, u + 1, agendaHasUrl(u) ? "adresse enregistrée" : "adresse iCal (https://...)", u + 1);
   }
   PluginSlide test = {};
   if (test_page < count) pluginSlide(test_page, test);
-  add(SETTINGS, pluginFade() ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night,
-      b.red ? " checked" : "", b.sleep ? " checked" : "", b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60,
-      b.sleep_to % 60, b.deep ? " checked" : "", s.latitude, s.longitude, test_page, test.enabled ? " checked" : "");
+  add(SETTINGS, air.host, air.bar ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "",
+      b.sleep ? " checked" : "", b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60,
+      b.deep ? " checked" : "", test_page, test.enabled ? " checked" : "");
 
   char weather[40];
   int32_t age = weatherAge();

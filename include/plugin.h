@@ -58,6 +58,13 @@ struct PluginSlide {
 uint8_t pluginCount();
 const Plugin *pluginAt(uint8_t index);
 
+// Ordre de passage du diaporama : des noms de pages séparés par des virgules, par exemple
+// "accueil,sonos,air,accueil,crypto". Une page peut y revenir plusieurs fois ; une page absente
+// n'y passe pas. « accueil » désigne la dernière page de la liste. Vide : l'ordre de la liste.
+// Gardé en flash.
+void pluginOrder(char *out, size_t cap);
+void pluginSetOrder(const char *names);
+
 // Fondu au noir entre deux pages, au lieu d'un changement sec. Gardé en flash.
 bool pluginFade();
 void pluginSetFade(bool on);
