@@ -79,7 +79,18 @@ static void *tlsCalloc(size_t n, size_t size) {
   return heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
+static SemaphoreHandle_t https_lock;
+
+NetHttps::NetHttps() {
+  xSemaphoreTake(https_lock, portMAX_DELAY);
+}
+
+NetHttps::~NetHttps() {
+  xSemaphoreGive(https_lock);
+}
+
 void netBegin() {
+  https_lock = xSemaphoreCreateMutex();
   mbedtls_platform_set_calloc_free(tlsCalloc, heap_caps_free);
   Preferences prefs;
   prefs.begin("reseau");

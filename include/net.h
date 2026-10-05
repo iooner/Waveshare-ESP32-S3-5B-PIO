@@ -21,3 +21,11 @@ void netSetTimezone(int32_t utc_offset);
 
 // A appeler depuis la boucle principale : enregistre en flash un fuseau qui vient de changer
 void netLoop();
+
+// Une seule connexion HTTPS à la fois : chacune prend de la RAM interne le temps de s'établir, et
+// plusieurs ensemble, au démarrage, la faisaient tomber très bas. A déclarer en tête d'une
+// lecture en HTTPS, avant la connexion : les autres attendent leur tour.
+struct NetHttps {
+  NetHttps();
+  ~NetHttps();
+};

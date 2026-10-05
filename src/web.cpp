@@ -34,7 +34,7 @@ static const char HEAD[] =
     "section>*{display:flex;align-items:center;gap:.7em;min-height:2.9em;border-top:1px solid #333}"
     "section>:first-child{border:0}input[type=checkbox]{width:1.3em;height:1.3em;margin-left:auto;accent-color:#30d158}"
     "input[type=range]{flex:1;min-width:0;accent-color:#0a84ff}input:not([type]),button{font:inherit;color:#fff;"
-    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}"
+    "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}input[name^=n]:not([type]){flex:0 0 5em}"
     "input[type=number]{width:4.5em;text-align:right}input[type=time],input[type=number]{font:inherit;color:#fff;"
     "background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
     "button{background:#0a84ff}#r,#cr{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}"
@@ -77,6 +77,21 @@ static const char COINS_NOTE[] =
     "</section><p>La page apparaît dès qu'une crypto est choisie. Sans quantité, elle affiche le cours et ses "
     "variations sur 1 heure, 24 heures et 7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le "
     "total du portefeuille. Les quantités restent sur la carte. Cours en euros, fournis par CoinGecko.";
+
+// Un agenda personnel : son nom, puis son adresse. L'adresse n'est jamais renvoyée au navigateur :
+// son champ reste vide, son texte grisé dit s'il y en a une. Arguments : rang (à partir de 1),
+// nom, rang, texte grisé, rang.
+static const char URL_ROW[] =
+    "<label><input name=n%u placeholder='nom' value='%s' maxlength=20><input name=u%u placeholder='%s' autocomplete=off>"
+    "<button type=button onclick=ud(%u)>Retirer</button></label>";
+
+static const char URLS_NOTE[] =
+    "</section><p>Les prochains événements de vos agendas, fondus en une liste ; le nom donné à un agenda est "
+    "affiché avec ses événements. Pour un agenda Google : Paramètres de "
+    "l'agenda, Intégrer l'agenda, puis copier son adresse au format iCal ici. L'adresse publique suffit pour un "
+    "agenda public ; pour un agenda privé, il faut l'adresse secrète."
+    "<p>Une adresse secrète donne accès à tout l'agenda. Elle est gardée sur la carte et n'est plus affichée ici "
+    "une fois enregistrée.";
 
 static const char AGENDA_NOTE[] = "</section><p>Les prochains événements du Liège Hackerspace, lus dans son calendrier public.";
 
@@ -124,7 +139,7 @@ static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agenda<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
     "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, agenda %u</b></div></section>";
 
 static const char SCRIPT[] =
@@ -133,7 +148,7 @@ static const char SCRIPT[] =
     // deux champs n'ont de sens qu'ensemble.
     "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
     "ok.textContent=a.ok?'enregistré':'refusé'}catch(e){ok.textContent='carte injoignable'}}"
-    "F.onchange=e=>{let t=e.target;if(t.type!='file'&&(t.type!='text'||t.name[0]=='q'))save()};F.onsubmit=e=>{e.preventDefault();save()};"
+    "F.onchange=e=>{let t=e.target;if(t.type=='file')return;if(t.name[0]=='u')save().then(()=>location.reload());else if(t.type!='text'||'qn'.includes(t.name[0]))save()};F.onsubmit=e=>{e.preventDefault();save()};"
     "F.oninput=e=>{if(e.target.type=='range')e.target.nextElementSibling.textContent=e.target.value+' %'};"
     // La recherche de ville part du navigateur, pas de la carte ; choisir une ville l'enregistre
     "q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
@@ -155,6 +170,9 @@ static const char SCRIPT[] =
     "i.type='hidden';i.name=k+n;i.value=v;F.append(i)};h('c',id);"
     "h('s',sym.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7));await save();location.reload()}"
     "async function cd(i){F['c'+i].value='';await save();location.reload()}"
+    // Agendas : une adresse collée est enregistrée puis masquée ; « Retirer » le demande à la carte
+    "async function ud(i){let h=document.createElement('input');h.type='hidden';h.name='ur'+i;h.value=1;F.append(h);"
+    "await save();location.reload()}"
     // Le firmware part tel quel dans le corps de la requête ; la page se recharge après le redémarrage
     "function u(){if(!f.files[0])return;let x=new XMLHttpRequest();x.open('POST','/update');"
     "x.upload.onprogress=e=>m.textContent=Math.round(100*e.loaded/e.total)+' %';"
@@ -219,6 +237,21 @@ static double quantity(const char *value) {
   return q > 0 ? q : 0;
 }
 
+// Décode la valeur d'un paramètre (« %3A » pour deux-points...), jusqu'au paramètre suivant
+static void decode(const char *value, char *out, size_t cap) {
+  size_t n = 0;
+  for (; value && *value && *value != '&' && n < cap - 1; value++) {
+    if (*value == '%' && isxdigit((uint8_t)value[1]) && isxdigit((uint8_t)value[2])) {
+      char hex[3] = {value[1], value[2], 0};
+      out[n++] = strtol(hex, nullptr, 16);
+      value += 2;
+    } else {
+      out[n++] = *value == '+' ? ' ' : *value;
+    }
+  }
+  out[n] = 0;
+}
+
 // La page envoie tous ses réglages à chaque fois. Une case décochée n'est pas envoyée : paramètre
 // absent = désactivé.
 static void apply(const char *query) {
@@ -237,6 +270,33 @@ static void apply(const char *query) {
   }
 
   pluginSetFade(param(query, "fondu") != nullptr);
+
+  // Agendas personnels : un champ vide ne change rien, l'adresse en place n'étant jamais renvoyée
+  for (uint8_t u = 0; u < AGENDA_URLS; u++) {
+    char name[8];
+    static char url[320];  // hors de la pile ; une seule tâche passe ici
+    snprintf(name, sizeof(name), "ur%u", u + 1);
+    if (param(query, name)) {
+      agendaSetUrl(u, "");
+      agendaSetName(u, "");
+      continue;
+    }
+    // Nom : sans les caractères qui casseraient la page quand elle le réaffiche
+    snprintf(name, sizeof(name), "n%u", u + 1);
+    if (param(query, name)) {
+      char label[AGENDA_NAME_SIZE];
+      decode(param(query, name), label, sizeof(label));
+      for (char *p = label; *p; p++) {
+        if (strchr("'\"<>&", *p)) *p = ' ';
+      }
+      agendaSetName(u, label);
+    }
+    snprintf(name, sizeof(name), "u%u", u + 1);
+    decode(param(query, name), url, sizeof(url));
+    if (strncmp(url, "https://", 8) == 0 || strncmp(url, "http://", 7) == 0 || strncmp(url, "webcal://", 9) == 0) {
+      agendaSetUrl(u, url);
+    }
+  }
 
   // Cryptos : la liste est rangée, sans les emplacements vidés. Absente de la requête (aucune
   // crypto à l'écran de réglages), elle n'est pas touchée.
@@ -347,6 +407,13 @@ static void sendPage(WiFiClient &c) {
       add("%s", COINS_NOTE);
     } else if (plugin == &agenda_plugin) {
       add("%s", AGENDA_NOTE);
+    } else if (plugin == &my_agenda_plugin) {
+      for (uint8_t u = 0; u < AGENDA_URLS; u++) {
+        char name[AGENDA_NAME_SIZE];
+        agendaName(u, name, sizeof(name));
+        add(URL_ROW, u + 1, name, u + 1, agendaHasUrl(u) ? "adresse enregistrée" : "adresse iCal (https://...)", u + 1);
+      }
+      add("%s", URLS_NOTE);
     } else {
       add("</section>");
     }
@@ -367,10 +434,14 @@ static void sendPage(WiFiClient &c) {
   if (crypto.count == 0) strlcpy(quotes, "aucune choisie", sizeof(quotes));
   else if (quotes_age < 0) strlcpy(quotes, "cours pas encore lus", sizeof(quotes));
   else snprintf(quotes, sizeof(quotes), "cours lus il y a %ld min", (long)(quotes_age / 60));
-  char agenda[40];
-  int32_t agenda_age = agendaAge();
-  if (agenda_age < 0) strlcpy(agenda, "pas encore lu", sizeof(agenda));
-  else snprintf(agenda, sizeof(agenda), "lu il y a %ld min", (long)(agenda_age / 60));
+  char agenda[160];
+  int32_t lghs_age = agendaAge(AGENDA_LGHS), mine_age = agendaAge(AGENDA_MINE);
+  int n = lghs_age < 0 ? snprintf(agenda, sizeof(agenda), "LGHS pas encore lu")
+                       : snprintf(agenda, sizeof(agenda), "LGHS lu il y a %ld min", (long)(lghs_age / 60));
+  if (mine_age >= 0) n += snprintf(agenda + n, sizeof(agenda) - n, ", les miens il y a %ld min", (long)(mine_age / 60));
+  for (AgendaList list : {AGENDA_LGHS, AGENDA_MINE}) {
+    if (agendaProblem(list)[0] && n < (int)sizeof(agenda)) n += snprintf(agenda + n, sizeof(agenda) - n, " ; %s", agendaProblem(list));
+  }
   unsigned long minutes = esp_timer_get_time() / 60000000;
   time_t now = time(nullptr);
   struct tm t;

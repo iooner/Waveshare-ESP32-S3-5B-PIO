@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <freertos/idf_additions.h>
 #include "json.h"
+#include "net.h"
 
 #define HOST             "corquaid.github.io"
 #define PATH             "/international-space-station-APIs/JSON/people-in-space.json"
@@ -19,6 +20,7 @@ static TaskHandle_t task;
 static char *resp;  // début de la réponse HTTP, en PSRAM
 
 static bool fetch() {
+  NetHttps one_at_a_time;
   NetworkClientSecure tls;
   tls.setInsecure();  // certificat non vérifié : rien de secret n'est envoyé, le nombre reçu n'est qu'affiché
   if (!tls.connect(HOST, 443, HTTP_TIMEOUT_MS)) return false;

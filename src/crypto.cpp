@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <freertos/idf_additions.h>
 #include "json.h"
+#include "net.h"
 
 #define HOST             "api.coingecko.com"
 #define HTTP_TIMEOUT_MS  8000
@@ -26,6 +27,7 @@ static bool fetch() {
   cryptoGet(c);
   if (c.count == 0) return true;
 
+  NetHttps one_at_a_time;
   NetworkClientSecure tls;
   // Le certificat du serveur n'est pas vérifié : rien de secret n'est envoyé, et ce qui est reçu
   // n'est qu'affiché. Un tiers sur le chemin pourrait au pire fausser les cours à l'écran.

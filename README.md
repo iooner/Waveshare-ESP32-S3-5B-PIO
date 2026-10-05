@@ -41,9 +41,17 @@ Une page liste les cinq prochains événements du [Liège Hackerspace](https://l
 
 ![La page agenda](docs/ecran-agenda.png)
 
+## Agendas personnels
+
+Une autre page, sur le même modèle, liste les dix prochains événements de vos propres agendas, sur deux colonnes : jusqu'à trois adresses au format iCalendar, collées dans le back office et fondues en une seule liste. Chaque agenda peut recevoir un nom, affiché avec ses événements. Pour un agenda Google, l'adresse se trouve dans les paramètres de l'agenda, sous « Intégrer l'agenda » : l'adresse publique pour un agenda public, l'adresse secrète pour un agenda privé.
+
+Une adresse secrète donne accès à tout l'agenda. Elle est gardée sur la carte et n'est plus jamais affichée dans le back office. La carte ne vérifie pas le certificat du serveur : sur un réseau qui n'est pas de confiance, un tiers pourrait la lire au passage.
+
+Le calendrier est lu au fil de l'eau, sans être gardé en entier : un agenda de plusieurs mégaoctets ne pose pas de problème.
+
 ## Diaporama
 
-Les pages activées se succèdent, chacune pendant une durée réglable : l'accueil, la page crypto, la page agenda, et la page Sonos quand une enceinte joue. Sonos peut aussi être prioritaire : elle garde alors l'écran pour elle tant que la musique joue.
+Les pages activées se succèdent, chacune pendant une durée réglable : l'accueil, la page crypto, les pages d'agenda, et la page Sonos quand une enceinte joue. Sonos peut aussi être prioritaire : elle garde alors l'écran pour elle tant que la musique joue.
 
 En option, un fondu au noir adoucit le passage d'une page à l'autre. Il est appliqué pendant le balayage de l'écran, sans rien redessiner.
 
@@ -75,6 +83,7 @@ Ce que la carte demande au réseau, et à quel rythme :
 | Météo et fuseau horaire | `api.open-meteo.com` | HTTP | toutes les 15 minutes | 1 minute | toujours, même météo décochée : elle donne le fuseau |
 | Cours des cryptomonnaies | `api.coingecko.com` | HTTPS | toutes les 2 minutes | 1 minute | si au moins une crypto est choisie |
 | Agenda du hackerspace | `lghs.be` | HTTPS | toutes les heures | 10 minutes | toujours |
+| Agendas personnels | les adresses données, par exemple `calendar.google.com` | HTTPS | toutes les heures, chacun | 10 minutes | pour chaque adresse enregistrée |
 | Personnes dans l'espace | `corquaid.github.io` | HTTPS | toutes les 6 heures | 10 minutes | si la case est cochée |
 | État des enceintes Sonos | enceintes du réseau local, port 1400 | HTTP | toutes les 2 secondes quand une enceinte joue, 5 secondes sinon | à la lecture suivante | toujours |
 | Recherche des enceintes Sonos | réseau local (SSDP) | UDP | toutes les 10 minutes | à la lecture suivante | toujours |
@@ -121,7 +130,7 @@ Quelques précisions :
 | `src/space.cpp` | Nombre de personnes dans l'espace |
 | `src/sonos.cpp` | Lecture des enceintes Sonos du réseau local |
 | `src/crypto.cpp` | Cours des cryptomonnaies, en HTTPS |
-| `src/agenda.cpp`, `src/ical.cpp` | Agenda du hackerspace : lecture du calendrier, récurrences comprises |
+| `src/agenda.cpp`, `src/ical.cpp` | Agendas du hackerspace et personnels : lecture des calendriers, récurrences comprises |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
 | `src/web.cpp` | Back office et mise à jour par Wi-Fi |
 | `tools/` | Génération des polices et des pictogrammes |
