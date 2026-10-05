@@ -36,6 +36,7 @@ struct Plugin {
   bool optional;     // désactivée tant qu'on ne l'active pas dans le back office (web.h)
   bool exclusive;    // garde l'écran quand elle a quelque chose à montrer, au lieu de prendre son tour dans le
                      // diaporama. Pour une page non optionnelle, ce n'est que le réglage de départ.
+  const char *label; // nom affiché dans le back office. Nul : `name`, avec une majuscule.
 };
 
 // Initialise tous les plugins. La dernière page de la liste, l'accueil, doit être toujours active.

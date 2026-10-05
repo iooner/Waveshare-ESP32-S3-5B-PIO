@@ -91,4 +91,5 @@ static void agendaShow() {
   agendaUpdate();
 }
 
-extern const Plugin agenda_plugin = {"agenda", false, agendaBegin, agendaActive, agendaShow, agendaUpdate, nullptr};
+extern const Plugin agenda_plugin = {"agenda", false, agendaBegin, agendaActive, agendaShow, agendaUpdate, nullptr,
+                                     false,    false, "Agenda LGHS"};

@@ -278,7 +278,7 @@ static void sendPage(WiFiClient &c) {
   for (uint8_t i = 0; i < pluginCount(); i++) {
     const Plugin *plugin = pluginAt(i);
     bool home = i + 1 == pluginCount();
-    const char *name = home ? "accueil" : plugin->name;
+    const char *name = home ? "accueil" : plugin->label ? plugin->label : plugin->name;
     PluginSlide slide;
     pluginSlide(i, slide);
     if (!home) add(PAGE_ON, toupper(name[0]), name + 1, i, slide.enabled ? " checked" : "");
