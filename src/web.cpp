@@ -125,7 +125,8 @@ static const char SETTINGS[] =
     "<div><button>Enregistrer le lieu</button></div></section>"
     "<h2>Maintenance</h2><section><label>Mire de test<input type=checkbox name=p%u%s></label>"
     "<div><input type=file id=f accept=.bin></div>"
-    "<div><button type=button onclick=u()>Envoyer le firmware</button><span id=m></span></div></section></form>";
+    "<div><button type=button onclick=u()>Envoyer le firmware</button><span id=m></span></div>"
+    "<div><button type=button onclick=rb()>Redémarrer la carte</button></div></section></form>";
 
 static const char FOOTER[] =
     "<footer><a href=https://github.com/iooner/Waveshare-ESP32-S3-5B-PIO>Code source sur GitHub</a><br>"
@@ -178,7 +179,10 @@ static const char SCRIPT[] =
     "function u(){if(!f.files[0])return;let x=new XMLHttpRequest();x.open('POST','/update');"
     "x.upload.onprogress=e=>m.textContent=Math.round(100*e.loaded/e.total)+' %';"
     "x.onload=()=>{m.textContent=x.responseText;setTimeout(()=>location.reload(),9000)};"
-    "x.onerror=()=>m.textContent='Envoi interrompu';x.send(f.files[0])}</script>";
+    "x.onerror=()=>m.textContent='Envoi interrompu';x.send(f.files[0])}"
+    // Redémarrage : demandé par un POST, pour qu'un simple lien ou un préchargement ne le déclenche pas
+    "async function rb(){if(!confirm('Redémarrer la carte ?'))return;m.textContent='Redémarrage...';"
+    "try{await fetch('/reboot',{method:'POST'})}catch(e){}setTimeout(()=>location.reload(),8000)}</script>";
 
 // Ajoute du texte à la page en cours de construction
 static void add(const char *format, ...) __attribute__((format(printf, 1, 2)));
@@ -567,6 +571,12 @@ static void handle(WiFiClient &c) {
     const char *length = strcasestr(end + 1, "content-length:");
     body += 4;
     receiveFirmware(c, (uint8_t *)body, req + len - body, length ? strtoul(length + 15, nullptr, 10) : 0);
+  } else if (end && strcmp(req, "POST /reboot") == 0) {
+    reply(c, "200 OK", "Redémarrage...");
+    c.stop();
+    Serial.println("Redémarrage demandé depuis le back office");
+    delay(300);
+    ESP.restart();
   } else {
     c.print("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
   }

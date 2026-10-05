@@ -1,6 +1,6 @@
 // Back office web : une page sur le port 80 de la carte, pour activer ou non les pages et la
 // météo, régler la luminosité, choisir le lieu des prévisions, voir l'état de la carte et lui
-// envoyer un nouveau firmware. Sans mot de passe : à garder sur le réseau local.
+// envoyer un nouveau firmware ou la redémarrer. Sans mot de passe : à garder sur le réseau local.
 // Nécessite netBegin() et pluginsBegin().
 //
 // Mise à jour par Wi-Fi sans passer par la page :

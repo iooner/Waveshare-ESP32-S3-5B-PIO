@@ -26,7 +26,7 @@ La nuit, la luminosité suit le soleil de la ville choisie. En option, les coule
 
 ## Le back office
 
-La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet d'envoyer un nouveau firmware.
+La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet de la redémarrer ou de lui envoyer un nouveau firmware.
 
 Deux précautions :
 
