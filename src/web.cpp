@@ -12,7 +12,7 @@
 #include "space.h"
 #include "weather.h"
 
-#define BUF_SIZE           8192  // une requête de navigateur fait moins de 2 Ko, la page ~6 Ko
+#define BUF_SIZE           16384  // une requête de navigateur fait moins de 2 Ko, la page ~9 Ko
 #define HTTP_TIMEOUT_MS    1500  // pour recevoir une requête entière
 #define IDLE_TIMEOUT_MS    600   // pour en recevoir le début
 #define UPDATE_TIMEOUT_MS  10000  // silence maximal pendant l'envoi d'un firmware
@@ -22,12 +22,14 @@ static size_t page_len;
 static volatile bool updating = false;
 
 // La page ressemble à un écran de réglages : des sections arrondies, une ligne par réglage, le
-// libellé à gauche et la commande à droite. Chaque case ou curseur est enregistré dès qu'il
-// change (voir SCRIPT) ; seul le lieu attend son bouton.
+// libellé à gauche et la commande à droite. Elle est rangée par page de l'écran (accueil, Sonos,
+// crypto, agenda), puis les réglages communs, la maintenance et l'état. Chaque case ou curseur
+// est enregistré dès qu'il change (voir SCRIPT) ; seul le lieu attend son bouton.
 static const char HEAD[] =
     "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>"
-    "<title>Écran</title><style>body{font:17px system-ui;max-width:26em;margin:0 auto;padding:1em;background:#000;"
-    "color:#eee}h1{font-size:1.5em;margin:.4em .6em}h2{font:600 .8em system-ui;color:#999;text-transform:uppercase;"
+    "<title>Écran</title><style>body{font:17px system-ui;max-width:26em;margin:0 auto;padding:0 1em 1em;background:#000;"
+    "color:#eee}h1{font-size:1.5em;margin:0;padding:.7em .4em .4em;position:sticky;top:0;background:#000}"
+    "h2{font:600 .8em system-ui;color:#999;text-transform:uppercase;"
     "margin:1.8em 1.2em .5em}section{background:#1c1c1e;border-radius:12px;padding:0 1em}"
     "section>*{display:flex;align-items:center;gap:.7em;min-height:2.9em;border-top:1px solid #333}"
     "section>:first-child{border:0}input[type=checkbox]{width:1.3em;height:1.3em;margin-left:auto;accent-color:#30d158}"
@@ -35,62 +37,83 @@ static const char HEAD[] =
     "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}"
     "input[type=number]{width:4.5em;text-align:right}input[type=time],input[type=number]{font:inherit;color:#fff;"
     "background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
-    "button{background:#0a84ff}#r,#cr{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}#r button,#cr button,label button{background:#2c2c2e}"
+    "button{background:#0a84ff}#r,#cr{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}"
+    "#r button,#cr button,label button{background:#2c2c2e}"
     "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
-    "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}</style>"
-    "<h1>Écran <small id=ok></small></h1><form><h2>Pages</h2><section>";
+    "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}"
+    "a{color:#0a84ff;text-decoration:none}footer{text-align:center;color:#999;font-size:.8em;line-height:1.9;"
+    "margin:3em 0 1.5em}</style><h1>Écran <small id=ok></small></h1><form>";
 
-// Lignes d'une page, dans la section « Pages ». Arguments : nom (initiale, suite), rang, puis
-// cochée ou non, ou la durée de son tour.
-static const char PAGE_ON[] = "<label>%c%s<input type=checkbox name=p%u%s></label>";
-static const char PAGE_EXCLUSIVE[] = "<label>%c%s prioritaire<input type=checkbox name=x%u%s></label>";
-static const char PAGE_SECONDS[] = "<label>%c%s pendant<input type=number name=t%u min=5 max=3600 value=%u>s</label>";
+// Section d'une page de l'écran. Arguments : son titre ; puis son rang et cochée ou non ; son rang
+// et la durée de son tour.
+static const char PAGE_HEAD[] = "<h2>%s</h2><section>";
+static const char PAGE_ON[] = "<label>Affichée<input type=checkbox name=p%u%s></label>";
+static const char PAGE_EXCLUSIVE[] = "<label>Prioritaire sur les autres pages<input type=checkbox name=x%u%s></label>";
+static const char PAGE_SECONDS[] =
+    "<label>Durée dans le diaporama<input type=number name=t%u min=5 max=3600 value=%u>s</label>";
+
+// Contenu de l'accueil. Arguments : météo, soleil, lune et espace cochés ou non
+static const char HOME_ROWS[] =
+    "<label>Météo<input type=checkbox name=meteo%s></label>"
+    "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
+    "<label>Phase de la lune<input type=checkbox name=lune%s></label>"
+    "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label></section>"
+    "<p>L'heure et la date restent toujours affichées.";
+
+static const char SONOS_NOTE[] =
+    "</section><p>La page n'apparaît que lorsqu'une enceinte joue. Prioritaire, elle garde alors l'écran pour elle ; "
+    "sinon elle prend son tour dans le diaporama.";
+
+static const char COINS_HEAD[] =
+    "<div><input id=cq placeholder='Chercher une crypto'><button type=button onclick=cs()>Chercher</button></div>"
+    "<div id=cr></div>";
 
 // Une crypto choisie. Arguments : symbole, rang, quantité, rang, identifiant, rang, symbole, rang
 static const char COIN_ROW[] =
     "<label>%s<input name=q%u placeholder='quantité' inputmode=decimal value='%s'><input type=hidden name=c%u value='%s'>"
     "<input type=hidden name=s%u value='%s'><button type=button onclick=cd(%u)>Retirer</button></label>";
 
-static const char COINS_HEAD[] =
-    "</section><p>Les pages activées se succèdent en diaporama, chacune pendant sa durée. La page Sonos n'apparaît "
-    "que lorsqu'une enceinte joue : prioritaire, elle garde alors l'écran pour elle. La page crypto apparaît dès "
-    "qu'une crypto est choisie, la page agenda (celui du Liège Hackerspace) dès que son calendrier est lu."
-    "<h2>Cryptomonnaies</h2><section><div><input id=cq placeholder='Chercher une crypto'>"
-    "<button type=button onclick=cs()>Chercher</button></div><div id=cr></div>";
+static const char COINS_NOTE[] =
+    "</section><p>La page apparaît dès qu'une crypto est choisie. Sans quantité, elle affiche le cours et ses "
+    "variations sur 1 heure, 24 heures et 7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le "
+    "total du portefeuille. Les quantités restent sur la carte. Cours en euros, fournis par CoinGecko.";
 
-// Arguments : météo, soleil, lune et espace cochés ou non, luminosité de jour (deux fois), cycle coché
+static const char AGENDA_NOTE[] = "</section><p>Les prochains événements du Liège Hackerspace, lus dans son calendrier public.";
+
+// Réglages communs. Arguments : fondu coché ou non, luminosité de jour (deux fois), cycle coché
 // ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
-// et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude
+// et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude,
+// mire cochée ou non
 static const char SETTINGS[] =
-    "</section><p>Sans quantité, la page affiche le cours et ses variations sur 1 heure, 24 heures et 7 jours. Avec une quantité, elle "
-    "affiche aussi ce qu'elle vaut, et le total du portefeuille. Les quantités restent sur la carte. Cours en euros, "
-    "fournis par CoinGecko.<h2>Accueil</h2><section>"
-    "<label>Météo<input type=checkbox name=meteo%s></label>"
-    "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
-    "<label>Phase de la lune<input type=checkbox name=lune%s></label>"
-    "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label></section>"
-    "<p>L'heure et la date restent toujours affichées."
+    "<h2>Diaporama</h2><section><label>Fondu entre les pages<input type=checkbox name=fondu%s></label></section>"
+    "<p>Les pages affichées se succèdent, chacune pendant sa durée."
     "<h2>Luminosité</h2><section>"
     "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
     "<label>Cycle automatique<input type=checkbox name=auto%s></label>"
     "<label>Nuit<input type=range name=nuit min=0 max=100 value=%u><b>%u %%</b></label>"
-    "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label>"
+    "<label>Rouge sombre la nuit<input type=checkbox name=rouge%s></label></section>"
+    "<p>Le cycle passe du niveau de jour au niveau de nuit quand le soleil se couche. Sans lui, seul le niveau de "
+    "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle."
+    "<h2>Extinction</h2><section>"
     "<label>Extinction programmée<input type=checkbox name=veille%s></label>"
     "<label>Éteindre à<input type=time name=debut value=%02u:%02u></label>"
     "<label>Rallumer à<input type=time name=fin value=%02u:%02u></label>"
     "<label>Veille profonde pendant l'extinction<input type=checkbox name=profonde%s></label></section>"
-    "<p>Le cycle passe du niveau de jour au niveau de nuit quand le soleil se couche. Sans lui, seul le niveau de "
-    "jour sert. Le rouge suit le soleil de la même façon, avec ou sans le cycle. L'extinction programmée éteint "
-    "tout à fait l'écran entre les deux heures, chaque jour."
-    "<p>En veille profonde, la carte s'arrête aussi pour consommer moins : cette page ne répond plus jusqu'à l'heure "
-    "du rallumage. Pour la joindre avant, appuyer sur son bouton reset : elle reste éveillée 5 minutes."
+    "<p>L'écran s'éteint tout à fait entre les deux heures, chaque jour. En veille profonde, la carte s'arrête "
+    "aussi pour consommer moins : cette page ne répond plus jusqu'à l'heure du rallumage. Pour la joindre avant, "
+    "appuyer sur son bouton reset : elle reste éveillée 5 minutes."
     "<h2>Lieu de la météo et de l'heure</h2><section>"
     "<div><input id=q placeholder='Chercher une ville'><button type=button onclick=s()>Chercher</button></div>"
     "<div id=r></div><label>Latitude<input id=lat name=lat value=%.4f></label>"
     "<label>Longitude<input id=lon name=lon value=%.4f></label>"
-    "<div><button>Enregistrer le lieu</button></div></section></form>"
-    "<h2>Mise à jour du firmware</h2><section><div><input type=file id=f accept=.bin></div>"
-    "<div><button type=button onclick=u()>Envoyer</button><span id=m></span></div></section>";
+    "<div><button>Enregistrer le lieu</button></div></section>"
+    "<h2>Maintenance</h2><section><label>Mire de test<input type=checkbox name=p%u%s></label>"
+    "<div><input type=file id=f accept=.bin></div>"
+    "<div><button type=button onclick=u()>Envoyer le firmware</button><span id=m></span></div></section></form>";
+
+static const char FOOTER[] =
+    "<footer><a href=https://github.com/iooner/Waveshare-ESP32-S3-5B-PIO>Code source sur GitHub</a><br>"
+    "Crafted with love in 🇧🇪 by <a href=https://iooner.io>iooner.io</a></footer>";
 
 // Arguments : page affichée, heure locale, soleil et lune, heures et minutes de fonctionnement, cause du
 // démarrage, signal Wi-Fi,
@@ -110,7 +133,7 @@ static const char SCRIPT[] =
     // deux champs n'ont de sens qu'ensemble.
     "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
     "ok.textContent=a.ok?'enregistré':'refusé'}catch(e){ok.textContent='carte injoignable'}}"
-    "F.onchange=e=>{if(e.target.type!='text'||e.target.name[0]=='q')save()};F.onsubmit=e=>{e.preventDefault();save()};"
+    "F.onchange=e=>{let t=e.target;if(t.type!='file'&&(t.type!='text'||t.name[0]=='q'))save()};F.onsubmit=e=>{e.preventDefault();save()};"
     "F.oninput=e=>{if(e.target.type=='range')e.target.nextElementSibling.textContent=e.target.value+' %'};"
     // La recherche de ville part du navigateur, pas de la carte ; choisir une ville l'enregistre
     "q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
@@ -275,42 +298,64 @@ static unsigned stackMargin(const char *task) {
 static void sendPage(WiFiClient &c) {
   page_len = 0;
   add("%s", HEAD);
-  for (uint8_t i = 0; i < pluginCount(); i++) {
-    const Plugin *plugin = pluginAt(i);
-    bool home = i + 1 == pluginCount();
-    const char *name = home ? "accueil" : plugin->label ? plugin->label : plugin->name;
-    PluginSlide slide;
-    pluginSlide(i, slide);
-    if (!home) add(PAGE_ON, toupper(name[0]), name + 1, i, slide.enabled ? " checked" : "");
-    if (plugin->optional) continue;  // la mire prend tout l'écran : ni priorité ni durée à régler
-    if (plugin->exclusive) add(PAGE_EXCLUSIVE, toupper(name[0]), name + 1, i, slide.exclusive ? " checked" : "");
-    add(PAGE_SECONDS, toupper(name[0]), name + 1, i, slide.seconds);
-  }
-  add("<label>Fondu entre les pages<input type=checkbox name=fondu%s></label>", pluginFade() ? " checked" : "");
-  add("%s", COINS_HEAD);
-  static Crypto crypto;  // hors de la pile, pour la même raison
-  cryptoGet(crypto);
-  for (uint8_t i = 0; i < crypto.count; i++) {
-    // Quantité sans zéros inutiles, vide si aucune
-    char held[24] = "";
-    if (crypto.coins[i].quantity > 0) {
-      int n = snprintf(held, sizeof(held), "%.8f", crypto.coins[i].quantity);
-      while (n > 1 && held[n - 1] == '0') held[--n] = 0;
-      if (held[n - 1] == '.') held[--n] = 0;
-    }
-    add(COIN_ROW, crypto.coins[i].symbol, i, held, i, crypto.coins[i].id, i, crypto.coins[i].symbol, i);
-  }
   WeatherSettings s;
   weatherSettings(s);
   BrightnessSettings b;
   brightnessSettings(b);
   AstroSettings sky;
   astroSettings(sky);
-  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "",
-      spaceEnabled() ? " checked" : "", b.day, b.day,
-      b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", b.sleep ? " checked" : "",
-      b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, b.deep ? " checked" : "", s.latitude,
-      s.longitude);
+  static Crypto crypto;  // hors de la pile, comptée au plus juste ; une seule tâche passe ici
+  cryptoGet(crypto);
+
+  // Une section par page de l'écran : l'accueil d'abord, puis les autres dans l'ordre du
+  // diaporama. La mire de test, qui prend tout l'écran, est rangée avec la maintenance.
+  uint8_t count = pluginCount(), test_page = count;
+  for (uint8_t k = 0; k < count; k++) {
+    uint8_t i = k == 0 ? count - 1 : k - 1;
+    const Plugin *plugin = pluginAt(i);
+    bool home = i == count - 1;
+    if (plugin->optional) {
+      test_page = i;
+      continue;
+    }
+    PluginSlide slide;
+    pluginSlide(i, slide);
+    char title[32];
+    strlcpy(title, home ? "accueil" : plugin->label ? plugin->label : plugin->name, sizeof(title));
+    title[0] = toupper(title[0]);
+    add(PAGE_HEAD, title);
+    if (!home) add(PAGE_ON, i, slide.enabled ? " checked" : "");
+    if (plugin->exclusive) add(PAGE_EXCLUSIVE, i, slide.exclusive ? " checked" : "");
+    add(PAGE_SECONDS, i, slide.seconds);
+    if (home) {
+      add(HOME_ROWS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "",
+          spaceEnabled() ? " checked" : "");
+    } else if (plugin == &sonos_plugin) {
+      add("%s", SONOS_NOTE);
+    } else if (plugin == &crypto_plugin) {
+      add("%s", COINS_HEAD);
+      for (uint8_t c = 0; c < crypto.count; c++) {
+        // Quantité sans zéros inutiles, vide si aucune
+        char held[24] = "";
+        if (crypto.coins[c].quantity > 0) {
+          int n = snprintf(held, sizeof(held), "%.8f", crypto.coins[c].quantity);
+          while (n > 1 && held[n - 1] == '0') held[--n] = 0;
+          if (held[n - 1] == '.') held[--n] = 0;
+        }
+        add(COIN_ROW, crypto.coins[c].symbol, c, held, c, crypto.coins[c].id, c, crypto.coins[c].symbol, c);
+      }
+      add("%s", COINS_NOTE);
+    } else if (plugin == &agenda_plugin) {
+      add("%s", AGENDA_NOTE);
+    } else {
+      add("</section>");
+    }
+  }
+  PluginSlide test = {};
+  if (test_page < count) pluginSlide(test_page, test);
+  add(SETTINGS, pluginFade() ? " checked" : "", b.day, b.day, b.automatic ? " checked" : "", b.night, b.night,
+      b.red ? " checked" : "", b.sleep ? " checked" : "", b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60,
+      b.sleep_to % 60, b.deep ? " checked" : "", s.latitude, s.longitude, test_page, test.enabled ? " checked" : "");
 
   char weather[40];
   int32_t age = weatherAge();
@@ -362,7 +407,10 @@ static void sendPage(WiFiClient &c) {
       (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
       brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, agenda, spacePeople(), esp_ota_get_running_partition()->label, stackMargin("web"),
       stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("agenda"));
+  add("%s", FOOTER);
   add("%s", SCRIPT);
+  // Une page coupée perdrait son script, et plus aucun réglage ne s'enregistrerait
+  if (page_len >= BUF_SIZE - 1) Serial.println("Back office : page trop longue pour son tampon");
 
   // Jamais gardée en cache par le navigateur : elle doit montrer les réglages du moment
   c.printf("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
