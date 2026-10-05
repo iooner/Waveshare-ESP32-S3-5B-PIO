@@ -8,6 +8,7 @@
 #include "gfx.h"
 #include "lcd.h"
 #include "plugin.h"
+#include "space.h"
 #include "weather.h"
 
 #define BUF_SIZE           8192  // une requête de navigateur fait moins de 2 Ko, la page ~6 Ko
@@ -56,7 +57,7 @@ static const char COINS_HEAD[] =
     "<h2>Cryptomonnaies</h2><section><div><input id=cq placeholder='Chercher une crypto'>"
     "<button type=button onclick=cs()>Chercher</button></div><div id=cr></div>";
 
-// Arguments : météo, soleil et lune cochés ou non, luminosité de jour (deux fois), cycle coché
+// Arguments : météo, soleil, lune et espace cochés ou non, luminosité de jour (deux fois), cycle coché
 // ou non, luminosité de nuit (deux fois), rouge coché ou non, extinction cochée ou non, heures
 // et minutes d'extinction puis de rallumage, veille profonde cochée ou non, latitude, longitude
 static const char SETTINGS[] =
@@ -65,7 +66,8 @@ static const char SETTINGS[] =
     "fournis par CoinGecko.<h2>Accueil</h2><section>"
     "<label>Météo<input type=checkbox name=meteo%s></label>"
     "<label>Lever et coucher du soleil<input type=checkbox name=soleil%s></label>"
-    "<label>Phase de la lune<input type=checkbox name=lune%s></label></section>"
+    "<label>Phase de la lune<input type=checkbox name=lune%s></label>"
+    "<label>Personnes dans l'espace<input type=checkbox name=espace%s></label></section>"
     "<p>L'heure et la date restent toujours affichées."
     "<h2>Luminosité</h2><section>"
     "<label>Jour<input type=range name=jour min=1 max=100 value=%u><b>%u %%</b></label>"
@@ -91,13 +93,14 @@ static const char SETTINGS[] =
 
 // Arguments : page affichée, heure locale, soleil et lune, heures et minutes de fonctionnement, cause du
 // démarrage, signal Wi-Fi,
-// RAM interne libre et son minimum, images ratées, morceaux en retard et plus longue copie, luminosité, teinte de nuit, météo, crypto, partition,
+// RAM interne libre et son minimum, images ratées, morceaux en retard et plus longue copie, luminosité,
+// (personnes dans l'espace après la crypto, -1 si inconnu) teinte de nuit, météo, crypto, partition,
 // marge des piles web, météo, Sonos et crypto
 static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Firmware<b>partition %s</b></div>"
     "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u</b></div></section>";
 
 static const char SCRIPT[] =
@@ -259,6 +262,7 @@ static void apply(const char *query) {
   brightnessConfigure(b);
 
   astroConfigure({param(query, "soleil") != nullptr, param(query, "lune") != nullptr});
+  spaceSetEnabled(param(query, "espace") != nullptr);
 }
 
 // Octets de pile qu'une tâche n'a jamais utilisés, 0 si elle n'existe pas
@@ -301,7 +305,8 @@ static void sendPage(WiFiClient &c) {
   brightnessSettings(b);
   AstroSettings sky;
   astroSettings(sky);
-  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "", b.day, b.day,
+  add(SETTINGS, s.enabled ? " checked" : "", sky.sun ? " checked" : "", sky.moon ? " checked" : "",
+      spaceEnabled() ? " checked" : "", b.day, b.day,
       b.automatic ? " checked" : "", b.night, b.night, b.red ? " checked" : "", b.sleep ? " checked" : "",
       b.sleep_from / 60, b.sleep_from % 60, b.sleep_to / 60, b.sleep_to % 60, b.deep ? " checked" : "", s.latitude,
       s.longitude);
@@ -350,7 +355,7 @@ static void sendPage(WiFiClient &c) {
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
-      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, esp_ota_get_running_partition()->label, stackMargin("web"),
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, spacePeople(), esp_ota_get_running_partition()->label, stackMargin("web"),
       stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"));
   add("%s", SCRIPT);
 

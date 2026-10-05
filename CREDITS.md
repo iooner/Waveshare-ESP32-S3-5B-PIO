@@ -34,6 +34,7 @@ sans reprendre de police d'icônes.
 | Serveur d'images de Spotify (`i.scdn.co`) | Pochette du morceau en cours |
 | [Open-Meteo](https://open-meteo.com) (`api.open-meteo.com`), données sous licence CC BY 4.0, usage non commercial sans clé | Temps actuel et prévisions heure par heure de la page horloge (`src/weather.cpp`) |
 | [CoinGecko](https://www.coingecko.com) (`api.coingecko.com`), accès public sans clé | Cours des cryptomonnaies de la page crypto (`src/crypto.cpp`) ; la recherche d'une crypto est appelée par le navigateur depuis le back office |
+| [International Space Station APIs](https://github.com/corquaid/international-space-station-APIs) (`corquaid.github.io`), liste tenue à jour par son auteur | Nombre de personnes dans l'espace, sur la page d'accueil (`src/space.cpp`) |
 | Recherche de ville d'Open-Meteo (`geocoding-api.open-meteo.com`) | Appelée par le navigateur depuis le back office (`src/web.cpp`), pas par la carte |
 
 ## Sources et références

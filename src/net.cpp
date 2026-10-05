@@ -2,6 +2,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <esp_sntp.h>
+#include <mbedtls/platform.h>
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -72,7 +73,14 @@ void netLoop() {
   prefs.end();
 }
 
+// Mémoire du chiffrement (TLS) : en PSRAM. Une connexion HTTPS demande ~40 Ko, que le SDK
+// prendrait en RAM interne, où il n'en reste pas assez à côté de l'écran.
+static void *tlsCalloc(size_t n, size_t size) {
+  return heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+
 void netBegin() {
+  mbedtls_platform_set_calloc_free(tlsCalloc, heap_caps_free);
   Preferences prefs;
   prefs.begin("reseau");
   netSetTimezone(prefs.getInt("utc", NET_TIMEZONE_DEFAULT));

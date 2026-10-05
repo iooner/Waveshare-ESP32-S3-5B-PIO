@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Dessine les pictogrammes météo et les écrit comme une police pour gfxText() (4 bits/pixel).
+"""Dessine des pictogrammes et les écrit comme une police pour gfxText() (4 bits/pixel).
 
-Exemple :
+Exemples :
   mkicons.py 64 font_weather64 > include/fonts/font_weather64.h
+  mkicons.py 28 font_space28 --set space > include/fonts/font_space28.h
 
 Un caractère par pictogramme, de 'a' à 'j' : voir ICONS en bas. Un pictogramme peut avoir une
 seconde couche, à dessiner par-dessus dans une autre couleur (l'astre, la pluie, l'éclair) : elle
@@ -19,6 +20,7 @@ from PIL import Image, ImageChops, ImageDraw
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("size", type=int, help="côté d'un pictogramme en pixels")
 parser.add_argument("name", help="nom de la variable C")
+parser.add_argument("--set", default="weather", choices=["weather", "space"], help="jeu de pictogrammes : météo (par défaut) ou espace")
 parser.add_argument("--preview", help="enregistre aussi une planche PNG de tous les pictogrammes")
 args = parser.parse_args()
 
@@ -114,8 +116,17 @@ def mist(img):
     line(img, 22, 57, 42, 57)
 
 
+def astronaut():
+    """Casque rond à visière pleine, posé sur un col."""
+    img = outline(lambda im, grow: disc(im, 32, 27, 21 + grow))
+    ImageDraw.Draw(img).rounded_rectangle([20 * K, 19 * K, 44 * K, 35 * K], radius=8 * K, fill=255)
+    ImageDraw.Draw(img).rounded_rectangle([17 * K, 52 * K, 47 * K, 62 * K], radius=4 * K, fill=255)
+    return img
+
+
 small_cloud = cloud(ox=9, oy=14, k=0.88)
-ICONS = [
+SPACE = [("a", "astronaute", astronaut)]
+WEATHER = [
     ("a", "soleil", lambda: sun(32, 32, 11, 18, 24)),
     ("b", "lune", lambda: moon(29, 33, 19)),
     ("c", "soleil et nuage", lambda: behind_cloud(sun(23, 23, 8, 13.5, 18, range(3, 8)), small_cloud)),
@@ -127,6 +138,7 @@ ICONS = [
     ("i", "neige", lambda: with_cloud(flakes)),
     ("j", "orage", lambda: with_cloud(bolt, True)),
 ]
+ICONS = SPACE if args.set == "space" else WEATHER
 
 bitmap = bytearray()
 glyphs = []

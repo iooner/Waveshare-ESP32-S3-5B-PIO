@@ -1,4 +1,5 @@
 // Wi-Fi et heure réseau (NTP). Identifiants dans include/secrets.h, non versionné.
+// Prépare aussi les connexions HTTPS des autres modules, dont la mémoire est placée en PSRAM.
 #pragma once
 #include <Arduino.h>
 

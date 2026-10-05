@@ -8,9 +8,11 @@
 #include "fonts/font_sans32.h"
 #include "fonts/font_sans40.h"
 #include "fonts/font_sans48.h"
+#include "fonts/font_space28.h"
 #include "fonts/font_weather64.h"
 #include "net.h"
 #include "plugin.h"
+#include "space.h"
 #include "weather.h"
 
 static const char *const DAYS[] = {"dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"};
@@ -119,8 +121,29 @@ static bool arrange() {
   return true;
 }
 
+// Personnes dans l'espace : un pictogramme et un nombre, dans le coin en haut à droite. En blanc,
+// comme les chiffres de l'heure dont ils peuvent partager les lignes : aucune couleur de plus.
+#define SPACE_X  916  // juste après le dernier chiffre de l'heure
+#define SPACE_Y  16
+#define SPACE_W  (LCD_WIDTH - MARGIN_X - SPACE_X)
+
+static int shown_space;  // nombre affiché, -1 = rien
+
+static void spaceUpdate() {
+  int people = spacePeople();
+  if (people == shown_space) return;
+  shown_space = people;
+  gfxFillRect(SPACE_X, SPACE_Y, SPACE_W, font_sans24.line_height, COLOR_BG);
+  if (people < 0) return;
+  char text[4];
+  snprintf(text, sizeof(text), "%d", people);
+  gfxText(SPACE_X, SPACE_Y + 3, "a", font_space28, COLOR_TEXT, COLOR_BG);
+  gfxTextBox(SPACE_X + 28, SPACE_Y, SPACE_W - 28, text, font_sans24, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
+}
+
 // Plus rien de ce qui est noté comme affiché ne l'est : tout sera redessiné, textes vides compris
 static void forgetShown() {
+  shown_space = INT_MIN;
   memset(shown_time, 0, sizeof(shown_time));
   shown_date[0] = shown_sky[0] = shown_alert[0] = 1;
   shown_weather = UINT32_MAX;
@@ -306,6 +329,7 @@ static void bigUpdate() {
     strlcpy(shown_date, date_text, sizeof(shown_date));
   }
   skyUpdate();
+  spaceUpdate();
   weatherUpdate();
 }
 
@@ -315,4 +339,9 @@ static void bigShow() {
 }
 
 extern const Plugin clock_bar_plugin = {"barre", false, nullptr, nullptr, barShow, barUpdate, nullptr};
-extern const Plugin clock_plugin = {"horloge", true, weatherBegin, nullptr, bigShow, bigUpdate, nullptr};
+static void bigBegin() {
+  weatherBegin();
+  spaceBegin();
+}
+
+extern const Plugin clock_plugin = {"horloge", true, bigBegin, nullptr, bigShow, bigUpdate, nullptr};

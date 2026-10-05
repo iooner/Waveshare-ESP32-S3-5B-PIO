@@ -3,7 +3,6 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <freertos/idf_additions.h>
-#include <mbedtls/platform.h>
 #include "json.h"
 
 #define HOST             "api.coingecko.com"
@@ -20,12 +19,6 @@ static bool valid = false;  // les cours sont ceux des cryptos choisies
 static SemaphoreHandle_t lock;
 static TaskHandle_t task;
 static char *resp;  // réponse HTTP en cours, en PSRAM
-
-// Mémoire du chiffrement (TLS) : en PSRAM. Une connexion chiffrée demande ~40 Ko, que le SDK
-// prendrait en RAM interne, où il n'en reste pas assez à côté de l'écran.
-static void *tlsCalloc(size_t n, size_t size) {
-  return heap_caps_calloc_prefer(n, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-}
 
 // Lit les cours et les publie. Faux si le serveur ne répond pas.
 static bool fetch() {
@@ -110,7 +103,6 @@ void cryptoBegin() {
   }
   prefs.end();
 
-  mbedtls_platform_set_calloc_free(tlsCalloc, heap_caps_free);
   resp = (char *)heap_caps_malloc(RESP_SIZE, MALLOC_CAP_SPIRAM);
   // Pile en PSRAM, pour garder la RAM interne à l'écran : permis parce que la tâche n'écrit jamais
   // en flash (les réglages sont enregistrés par la tâche qui appelle cryptoConfigure())

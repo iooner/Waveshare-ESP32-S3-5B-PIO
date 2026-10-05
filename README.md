@@ -12,9 +12,10 @@ Le firmware est écrit pour PlatformIO, sans bibliothèque externe : le pilote d
 
 - **Heure et date**, dans le fuseau horaire de la ville choisie.
 - **Soleil et lune** : heures de lever et de coucher, phase de la lune. Calculés sur la carte, sans réseau.
+- **Personnes dans l'espace** : leur nombre, en petit dans un coin.
 - **Météo** : le temps actuel puis les six heures suivantes, avec le risque de pluie. Une ligne annonce la pluie à venir (« Pluie dans 25 min ») ou sa fin. Données [Open-Meteo](https://open-meteo.com), sans compte ni clé.
 
-La météo, le soleil et la lune s'activent ou se désactivent séparément, et la page se recentre toute seule pour rester équilibrée.
+La météo, le soleil, la lune et le compteur de l'espace s'activent ou se désactivent séparément, et la page se recentre toute seule pour rester équilibrée.
 
 ## Sonos
 
@@ -89,6 +90,7 @@ La page n'a pas de mot de passe : elle est faite pour rester sur le réseau loca
 | `src/plugin.cpp`, `src/plugins/` | Pages et leur diaporama : accueil (horloge et météo), Sonos, crypto, mire de test |
 | `src/weather.cpp` | Lecture d'Open-Meteo, fuseau horaire du lieu |
 | `src/astro.cpp` | Soleil et lune |
+| `src/space.cpp` | Nombre de personnes dans l'espace |
 | `src/sonos.cpp` | Lecture des enceintes Sonos du réseau local |
 | `src/crypto.cpp` | Cours des cryptomonnaies, en HTTPS |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
