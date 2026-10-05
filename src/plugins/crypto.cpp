@@ -67,10 +67,12 @@ static void draw() {
     for (uint8_t k = 0; k < 3; k++) {
       float change = c.change[i][k];
       if (isnan(change)) continue;
-      snprintf(text, sizeof(text), "%+.1f", change);
+      // Une variation qui s'arrondit à zéro n'est ni une hausse ni une baisse : en blanc, sans signe
+      bool flat = fabsf(change) < 0.05f;
+      snprintf(text, sizeof(text), flat ? "0.0" : "%+.1f", change);
       if (char *dot = strchr(text, '.')) *dot = ',';
-      gfxTextBox(col[k] + GAP, y + change_dy, col[k + 1] - col[k] - GAP, text, font_sans32, change < 0 ? COLOR_DOWN : COLOR_UP,
-                 COLOR_BG, GFX_RIGHT);
+      gfxTextBox(col[k] + GAP, y + change_dy, col[k + 1] - col[k] - GAP, text, font_sans32,
+                 flat ? COLOR_TEXT : change < 0 ? COLOR_DOWN : COLOR_UP, COLOR_BG, GFX_RIGHT);
     }
     if (c.coins[i].quantity <= 0) continue;
     double value = c.coins[i].quantity * c.price[i];

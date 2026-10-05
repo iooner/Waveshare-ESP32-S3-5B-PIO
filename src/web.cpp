@@ -76,7 +76,8 @@ static const char COIN_ROW[] =
 static const char COINS_NOTE[] =
     "</section><p>La page apparaît dès qu'une crypto est choisie. Sans quantité, elle affiche le cours et ses "
     "variations sur 1 heure, 24 heures et 7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le "
-    "total du portefeuille. Les quantités restent sur la carte. Cours en euros, fournis par CoinGecko.";
+    "total du portefeuille. Les quantités restent sur la carte. Cours en euros, fournis par CoinGecko, "
+    "à titre purement informatif : ils peuvent être en retard ou inexacts.";
 
 // Un agenda personnel : son nom, puis son adresse. L'adresse n'est jamais renvoyée au navigateur :
 // son champ reste vide, son texte grisé dit s'il y en a une. Arguments : rang (à partir de 1),
