@@ -65,6 +65,28 @@ La page n'a pas de mot de passe : elle est faite pour rester sur le réseau loca
 
 <img src="docs/back-office.png" alt="Le back office, sur un téléphone" width="320">
 
+## Appels réseau
+
+Ce que la carte demande au réseau, et à quel rythme :
+
+| Donnée | Service | Protocole | Rythme | Après un échec | Condition |
+| --- | --- | --- | --- | --- | --- |
+| Heure | `pool.ntp.org` | NTP | à chaque connexion au Wi-Fi, puis toutes les 3 heures | géré par le SDK | toujours |
+| Météo et fuseau horaire | `api.open-meteo.com` | HTTP | toutes les 15 minutes | 1 minute | toujours, même météo décochée : elle donne le fuseau |
+| Cours des cryptomonnaies | `api.coingecko.com` | HTTPS | toutes les 2 minutes | 1 minute | si au moins une crypto est choisie |
+| Agenda du hackerspace | `lghs.be` | HTTPS | toutes les heures | 10 minutes | toujours |
+| Personnes dans l'espace | `corquaid.github.io` | HTTPS | toutes les 6 heures | 10 minutes | si la case est cochée |
+| État des enceintes Sonos | enceintes du réseau local, port 1400 | HTTP | toutes les 2 secondes quand une enceinte joue, 5 secondes sinon | à la lecture suivante | toujours |
+| Recherche des enceintes Sonos | réseau local (SSDP) | UDP | toutes les 10 minutes | à la lecture suivante | toujours |
+| Pochette du morceau | `i.scdn.co` | HTTP | à chaque changement de pochette | pas de pochette | quand une enceinte joue |
+
+Quelques précisions :
+
+- Après un démarrage, les lectures en HTTPS attendent 30 à 40 secondes.
+- Une donnée trop ancienne n'est plus affichée : la météo après 90 minutes sans lecture réussie, les cours après 20 minutes, l'agenda après 48 heures.
+- L'agenda et les cours sont lus même si leur page est désactivée, et les enceintes Sonos sont interrogées même si la page Sonos l'est.
+- Les recherches de ville et de cryptomonnaie du back office partent du navigateur, à la demande, pas de la carte.
+
 ## Matériel
 
 - [Waveshare ESP32-S3-LCD-5B](https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-5), version sans tactile : ESP32-S3-WROOM-1-N16R8 (16 Mo de flash, 8 Mo de PSRAM), dalle RGB 1024 × 600.

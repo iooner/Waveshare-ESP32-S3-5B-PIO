@@ -36,7 +36,7 @@ static void netTask(void *) {
   WiFi.onEvent(
       [](arduino_event_id_t, arduino_event_info_t) {
         Serial.printf("Wi-Fi connecté : %s\n", WiFi.localIP().toString().c_str());
-        // Relancé à chaque connexion : la requête NTP part tout de suite, puis toutes les heures
+        // Relancé à chaque connexion : la requête NTP part tout de suite, puis toutes les 3 heures
         configTzTime(tz_rule, NTP_SERVER);
       },
       ARDUINO_EVENT_WIFI_STA_GOT_IP);
