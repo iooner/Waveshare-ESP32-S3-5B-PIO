@@ -13,21 +13,8 @@
 #define TOTAL_H     86   // filet, puis le total
 #define PRICE_W     180  // le cours, à gauche de son bord droit : "1 234,56 €" fait 163 pixels
 #define GAP         8    // entre deux colonnes
-#define COLOR_UP    RGB565(60, 210, 110)
-#define COLOR_DOWN  RGB565(255, 90, 80)
-#define COLOR_RULE  RGB565(60, 60, 60)
 
 static uint32_t shown;  // version des cours affichés, 0 = rien
-
-// Variation en pour cent, dans sa colonne : verte à la hausse, rouge à la baisse. Celle qui
-// s'arrondit à zéro n'est ni l'une ni l'autre : en blanc, sans signe.
-static void change(int16_t x, int16_t y, int16_t w, double percent, const GfxFont &font) {
-  bool flat = fabs(percent) < 0.05;
-  char text[16];
-  snprintf(text, sizeof(text), flat ? "0,0 %%" : "%+.1f %%", percent);
-  if (char *dot = strchr(text, '.')) *dot = ',';
-  gfxTextBox(x, y, w, text, font, flat ? COLOR_TEXT : percent < 0 ? COLOR_DOWN : COLOR_UP, COLOR_BG, GFX_RIGHT);
-}
 
 // Titres affichés à la fois ; au-delà, la page les fait défiler par groupes
 #define GROUP       6
@@ -103,20 +90,20 @@ static void draw() {
     if (price <= 0) continue;  // titre inconnu de la bourse
     formatEuros(price, text, sizeof(text));
     gfxTextBox(left(0), row_y, width(0), text, font_sans32, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
-    if (previous > 0) change(left(1), row_y, width(1), (price / previous - 1) * 100, font_sans32);
+    if (previous > 0) pluginDrawChange(left(1), row_y, width(1), (price / previous - 1) * 100, font_sans32);
     if (st.quantity <= 0) continue;
     formatEuros(value[i], text, sizeof(text));
     gfxTextBox(left(2), row_y, width(2), text, font_sans32, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
-    if (st.cost > 0) change(left(3), row_y, width(3), (price / st.cost - 1) * 100, font_sans32);
+    if (st.cost > 0) pluginDrawChange(left(3), row_y, width(3), (price / st.cost - 1) * 100, font_sans32);
   }
   if (wallet) {
     int16_t dy = (font_sans40.line_height - font_sans32.line_height) / 2 + 2;
     gfxFillRect(MARGIN_X, y + 6, CONTENT_W, 2, COLOR_RULE);
     gfxTextBox(MARGIN_X, y + 24, name_w, "Portefeuille", font_sans40, COLOR_TEXT, COLOR_BG);
-    if (day_from > 0) change(left(1), y + 24 + dy, width(1), (day_to / day_from - 1) * 100, font_sans32);
+    if (day_from > 0) pluginDrawChange(left(1), y + 24 + dy, width(1), (day_to / day_from - 1) * 100, font_sans32);
     formatEuros(total, text, sizeof(text));
     gfxTextBox(left(2), y + 24, width(2), text, font_sans40, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
-    if (cost_from > 0) change(left(3), y + 24 + dy, width(3), (cost_to / cost_from - 1) * 100, font_sans32);
+    if (cost_from > 0) pluginDrawChange(left(3), y + 24 + dy, width(3), (cost_to / cost_from - 1) * 100, font_sans32);
   }
   gfxSetCoarse(false);
 }

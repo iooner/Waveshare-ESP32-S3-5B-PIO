@@ -1,9 +1,9 @@
 #include "sonos.h"
+#include "jpeg.h"
 #include "text.h"
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <freertos/idf_additions.h>
-#include <esp32s3/rom/tjpgd.h>
 
 #define SONOS_PORT       1400
 #define MAX_SPEAKERS     8
@@ -28,9 +28,8 @@ static char *resp;  // réponse HTTP en cours, en PSRAM ; GetPositionInfo fait ~
 // Pochette : deux images en PSRAM, celle qui est publiée et celle en cours de décodage
 #define ART_PX        (SONOS_ART_SIZE * SONOS_ART_SIZE)
 #define ART_JPEG_MAX  (96 * 1024)  // une pochette de 300 x 300 pèse ~30 Ko
-#define ART_POOL      4096         // mémoire de travail du décodeur JPEG
 static uint16_t *art_buf[2];
-static uint8_t *art_jpeg, *art_pool;
+static uint8_t *art_jpeg;
 static const uint16_t *art = nullptr;
 static uint32_t art_version = 0;
 static uint8_t art_next = 0;
@@ -231,34 +230,6 @@ static bool readSpeaker(const Speaker &sp, SonosTrack &t) {
 
 // --- Pochette ---
 
-struct ArtIo {
-  const uint8_t *data;
-  size_t len, pos;
-  uint16_t *out;
-};
-
-static UINT artRead(JDEC *jd, BYTE *buf, UINT n) {
-  ArtIo *io = (ArtIo *)jd->device;
-  n = min((size_t)n, io->len - io->pos);
-  if (buf) memcpy(buf, io->data + io->pos, n);
-  io->pos += n;
-  return n;
-}
-
-// Reçoit un bloc décodé en RGB888 et le range en RGB565, coupé à la taille de la pochette
-static UINT artWrite(JDEC *jd, void *bitmap, JRECT *r) {
-  ArtIo *io = (ArtIo *)jd->device;
-  const uint8_t *px = (const uint8_t *)bitmap;
-  for (int y = r->top; y <= r->bottom; y++) {
-    for (int x = r->left; x <= r->right; x++, px += 3) {
-      if (x < SONOS_ART_SIZE && y < SONOS_ART_SIZE) {
-        io->out[y * SONOS_ART_SIZE + x] = (px[0] & 0xF8) << 8 | (px[1] & 0xFC) << 3 | px[2] >> 3;
-      }
-    }
-  }
-  return 1;
-}
-
 // Télécharge et décode la pochette dans l'image de réserve. Spotify sert ses pochettes en HTTP
 // simple, et en 300 x 300 quand on change le préfixe de leur identifiant.
 static bool fetchArt(const char *url) {
@@ -285,15 +256,10 @@ static bool fetchArt(const char *url) {
   if (!body || memcmp(art_jpeg + 9, "200", 3) != 0) return false;
   body += 4;
 
-  uint16_t *out = art_buf[art_next];
-  memset(out, 0, ART_PX * sizeof(uint16_t));
-  ArtIo io = {body, n - (size_t)(body - art_jpeg), 0, out};
-  JDEC jd;
-  if (jd_prepare(&jd, artRead, art_pool, ART_POOL, &io) != JDR_OK) return false;
-  // Décodeur de la ROM : réductions de 1/2, 1/4, 1/8 seulement
-  uint8_t scale = 0;
-  while (scale < 3 && (jd.width >> scale) > SONOS_ART_SIZE) scale++;
-  return jd_decomp(&jd, artWrite, scale) == JDR_OK;
+  // Les pochettes sont carrées : une autre forme serait mal rangée dans l'image
+  uint16_t w, h;
+  return jpegDecode(body, n - (body - art_jpeg), art_buf[art_next], SONOS_ART_SIZE, SONOS_ART_SIZE, w, h) &&
+         w == SONOS_ART_SIZE && h == SONOS_ART_SIZE;
 }
 
 // Met la pochette à jour quand le morceau en change. L'ancienne reste publiée pendant le chargement.
@@ -359,8 +325,7 @@ void sonosBegin() {
   lock = xSemaphoreCreateMutex();
   for (uint16_t *&b : art_buf) b = (uint16_t *)heap_caps_malloc(ART_PX * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
   art_jpeg = (uint8_t *)heap_caps_malloc(ART_JPEG_MAX, MALLOC_CAP_SPIRAM);
-  art_pool = (uint8_t *)heap_caps_malloc(ART_POOL, MALLOC_CAP_SPIRAM);
-  if (!art_buf[0] || !art_buf[1] || !art_pool) art_jpeg = nullptr;  // pas de pochette
+  if (!art_buf[0] || !art_buf[1]) art_jpeg = nullptr;  // pas de pochette
   resp = (char *)heap_caps_malloc(RESP_SIZE, MALLOC_CAP_SPIRAM);
   // Pile en PSRAM, pour garder la RAM interne à l'écran : permis parce que la tâche n'écrit jamais en flash
   if (resp) xTaskCreatePinnedToCoreWithCaps(sonosTask, "sonos", 8192, nullptr, 1, nullptr, 0, MALLOC_CAP_SPIRAM);

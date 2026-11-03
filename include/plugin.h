@@ -16,6 +16,9 @@
 #define COLOR_BG    COLOR_BLACK
 #define COLOR_TEXT  COLOR_WHITE
 #define COLOR_DIM   RGB565(150, 150, 150)  // texte secondaire
+#define COLOR_UP    RGB565(60, 210, 110)   // hausse
+#define COLOR_DOWN  RGB565(255, 90, 80)    // baisse
+#define COLOR_RULE  RGB565(60, 60, 60)     // filet de séparation
 
 // Géométrie commune
 #define BAR_HEIGHT   80
@@ -73,12 +76,17 @@ const char *pluginCurrentName();  // la page à l'écran
 void pluginSlide(uint8_t index, PluginSlide &out);
 void pluginSetSlide(uint8_t index, const PluginSlide &s);
 
+// Variation en pour cent, alignée à droite dans sa boîte : verte à la hausse, rouge à la baisse.
+// Celle qui s'arrondit à zéro n'est ni l'une ni l'autre : en blanc, sans signe. `unit` : suivie de " %".
+void pluginDrawChange(int16_t x, int16_t y, int16_t w, double percent, const GfxFont &font, bool unit = true);
+
 // Plugins disponibles
 extern const Plugin clock_bar_plugin;  // barre : date à gauche, heure à droite
 extern const Plugin sonos_plugin;      // page : morceau en cours sur les enceintes Sonos, quand elles jouent
 extern const Plugin crypto_plugin;     // page : cours des cryptomonnaies choisies et valeur du portefeuille
 extern const Plugin stocks_plugin;     // page : cours des actions et ETF choisis et valeur du portefeuille
 extern const Plugin fortune_plugin;    // page : valeur des actions et des cryptos détenues, et leur total
+extern const Plugin wiki_plugin;       // page : article du jour de Wikipédia en français, avec son image
 extern const Plugin agenda_plugin;     // page : prochains événements du Liège Hackerspace
 extern const Plugin my_agenda_plugin;  // page : prochains événements des agendas personnels
 extern const Plugin air_plugin;        // page : particules fines mesurées par le capteur de la maison

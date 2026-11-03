@@ -11,7 +11,7 @@
 // Pages, dans l'ordre du diaporama ; l'accueil en dernier. Elles se règlent dans le back office
 // (web.h) ; la mire de test est désactivée au départ.
 static const Plugin *const pages[] = {&demo_plugin,   &sonos_plugin,     &crypto_plugin, &stocks_plugin, &fortune_plugin,
-                                       &agenda_plugin, &my_agenda_plugin, &air_plugin,   &clock_plugin};
+                                       &wiki_plugin,   &agenda_plugin, &my_agenda_plugin, &air_plugin,   &clock_plugin};
 
 void setup() {
   Serial.begin(115200);
@@ -69,7 +69,7 @@ void loop() {
   reportLcdHealth();
   brightnessLoop();
   netLoop();
-  stocksLoop();
+  stocksLoop(lcdFade() == 0);  // noir juste après un changement de page avec fondu
   // Affiche l'image et attend le rafraîchissement suivant de la dalle
   lcdPresent();
 }

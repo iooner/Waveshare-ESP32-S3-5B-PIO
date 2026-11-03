@@ -35,11 +35,16 @@ void stocksGet(Stocks &out);
 // Secondes écoulées depuis la dernière lecture réussie, ou -1 s'il n'y en a pas eu
 int32_t stocksAge();
 
+// Durée du dernier tour de lecture des cours, en secondes
+uint16_t stocksRoundSeconds();
+
 // Nombre de titres choisis dont la bourse ne connaît pas l'ISIN
 uint8_t stocksUnknown();
 
-// A appeler depuis la boucle principale : enregistre en flash les titres qui viennent de changer
-void stocksLoop();
+// A appeler depuis la boucle principale : enregistre en flash les titres qui viennent de changer.
+// Une écriture en flash fait rater des images : elle attend que l'écran soit noir (`dark`, entre
+// deux pages), ou au plus 10 minutes.
+void stocksLoop(bool dark);
 
 // Remplace les titres choisis et relit les cours sans attendre. Ils sont gardés en flash par stocksLoop().
 void stocksConfigure(const Stock *stocks, uint8_t count);

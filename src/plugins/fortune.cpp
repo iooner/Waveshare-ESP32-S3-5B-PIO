@@ -15,9 +15,6 @@
 #define LABEL_X     162
 #define VALUE_R     690  // bord droit des montants
 #define CHANGE_R    862  // bord droit des variations
-#define COLOR_UP    RGB565(60, 210, 110)
-#define COLOR_DOWN  RGB565(255, 90, 80)
-#define COLOR_RULE  RGB565(60, 60, 60)
 
 static uint32_t shown_stocks, shown_crypto;  // versions affichées
 
@@ -65,13 +62,7 @@ static void line(int16_t y, const char *label, const Holding &h, const GfxFont &
   gfxTextBox(LABEL_X, y, 260, label, font, COLOR_TEXT, COLOR_BG);
   formatEuros(h.value, text, sizeof(text));
   gfxTextBox(LABEL_X + 260, y, VALUE_R - LABEL_X - 260, text, font, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
-  if (h.before <= 0) return;
-  double percent = (h.value / h.before - 1) * 100;
-  bool flat = fabs(percent) < 0.05;
-  snprintf(text, sizeof(text), flat ? "0,0 %%" : "%+.1f %%", percent);
-  if (char *dot = strchr(text, '.')) *dot = ',';
-  gfxTextBox(VALUE_R + 8, y + dy, CHANGE_R - VALUE_R - 8, text, font_sans32,
-             flat ? COLOR_TEXT : percent < 0 ? COLOR_DOWN : COLOR_UP, COLOR_BG, GFX_RIGHT);
+  if (h.before > 0) pluginDrawChange(VALUE_R + 8, y + dy, CHANGE_R - VALUE_R - 8, (h.value / h.before - 1) * 100, font_sans32);
 }
 
 static void draw() {

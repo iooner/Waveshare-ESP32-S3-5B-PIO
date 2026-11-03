@@ -10,11 +10,12 @@ void toLatin1(char *s) {
   static const struct {
     const char *from, *to;  // `to` jamais plus long que `from`
   } MAP[] = {{"‘", "'"}, {"’", "'"}, {"“", "\""}, {"”", "\""}, {"–", "-"},
-             {"—", "-"}, {"…", "..."}, {"œ", "oe"}, {"Œ", "OE"}};
+             {"—", "-"}, {"…", "..."}, {"œ", "oe"}, {"Œ", "OE"},
+             {"\u202F", " "}, {"\u2009", " "}};  // espaces fines du français
   char *w = s;
   for (char *r = s; *r;) {
     bool done = false;
-    if ((uint8_t)*r >= 0xC5) {
+    if ((uint8_t)*r >= 0xC5) {  // premier octet de tous les caractères de MAP
       for (const auto &m : MAP) {
         size_t n = strlen(m.from);
         if (strncmp(r, m.from, n) == 0) {

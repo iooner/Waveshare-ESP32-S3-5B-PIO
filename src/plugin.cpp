@@ -174,6 +174,15 @@ void pluginsLoop() {
   if (p->update) p->update();
 }
 
+void pluginDrawChange(int16_t x, int16_t y, int16_t w, double percent, const GfxFont &font, bool unit) {
+  bool flat = fabs(percent) < 0.05;
+  char text[16];
+  if (flat) snprintf(text, sizeof(text), "0.0%s", unit ? " %" : "");
+  else snprintf(text, sizeof(text), "%+.1f%s", percent, unit ? " %" : "");
+  if (char *dot = strchr(text, '.')) *dot = ',';
+  gfxTextBox(x, y, w, text, font, flat ? COLOR_TEXT : percent < 0 ? COLOR_DOWN : COLOR_UP, COLOR_BG, GFX_RIGHT);
+}
+
 uint8_t pluginCount() {
   return count;
 }

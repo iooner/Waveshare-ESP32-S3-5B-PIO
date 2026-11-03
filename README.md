@@ -11,7 +11,8 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 | <img src="docs/ecran-nuit.png" width="400"><br>**Accueil, la nuit** | <img src="docs/ecran-sonos.png" width="400"><br>**Sonos** |
 | <img src="docs/ecran-crypto.png" width="400"><br>**Cryptomonnaies** | <img src="docs/ecran-actions.png" width="400"><br>**Actions et ETF** |
 | <img src="docs/ecran-fortune.png" width="400"><br>**Fortune** | <img src="docs/ecran-agendas.png" width="400"><br>**Agendas personnels** |
-| <img src="docs/ecran-agenda.png" width="400"><br>**Agenda du hackerspace** | <img src="docs/back-office.png" width="210"><br>**Back office** |
+| <img src="docs/ecran-agenda.png" width="400"><br>**Agenda du hackerspace** | <img src="docs/ecran-wikipedia.png" width="400"><br>**Wikipédia** |
+| <img src="docs/back-office.png" width="210"><br>**Back office** | |
 
 - **Accueil** : heure et date, météo des six heures à venir avec annonce de pluie, lever et coucher du soleil, phase de la lune, nombre de personnes dans l'espace, particules fines d'un capteur de la maison. Chaque élément se désactive, et la page se recentre.
 - **Sonos** : le morceau en cours quand une enceinte du réseau joue. La carte interroge les enceintes directement, sans compte ni cloud. La pochette est celle que l'enceinte annonce pour le morceau : la carte la télécharge sur le serveur d'images de Spotify, en 300 × 300. Un morceau venu d'une autre source (radio, bibliothèque locale) s'affiche sans pochette.
@@ -19,6 +20,7 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 - **Actions et ETF** : 250 titres au plus, désignés par leur ISIN, au cours en euros de la bourse [Lang & Schwarz](https://www.ls-tc.de), celle où passent les ordres de Trade Republic. Les quantités se mettent à jour d'un coup en important dans le back office l'État du patrimoine de Trade Republic (le PDF, lu par le navigateur). Pour chacun : le cours, la variation du jour, et, si une quantité est saisie, sa valeur, et sa plus-value si le prix d'achat l'est aussi. Au-delà de six titres, la page les fait défiler par groupes, du plus gros au plus petit, avec le total du portefeuille. Même avertissement que pour les cryptos : à titre purement informatif.
 - **Fortune** : ce que valent les actions et les cryptos détenues, chacune avec sa variation, et leur total.
 - **Agendas personnels** : les dix prochains événements de trois calendriers au plus, donnés par leur adresse iCal (Google Agenda, par exemple).
+- **Wikipédia** : l'article mis en avant chaque jour par Wikipédia en français (rubrique « Lumière sur » de sa page d'accueil), mis en page comme la page Sonos : l'image choisie par la rubrique, le titre et le début de l'article.
 - **Agenda du hackerspace** : les cinq prochains événements du [Liège Hackerspace](https://lghs.be).
 - **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau sur les dix de l'[indice belge de qualité de l'air](https://wallonair.be/fr/en-savoir-plus/indice-de-la-qualite-de-l-air) (BelAQI, seuils horaires). En option, la barre du haut des autres pages donne le niveau en un mot, dans sa couleur : la moyenne des deux.
 
@@ -26,7 +28,7 @@ Les pages se succèdent en diaporama, dans l'ordre choisi dans le back office : 
 
 La nuit, la luminosité suit le soleil de la ville choisie. En option, les couleurs virent au rouge sombre, et l'écran s'éteint entre deux heures, avec ou sans mise en veille profonde de la carte.
 
-*Les images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos. Les cours et les portefeuilles qu'elles montrent sont inventés.*
+*Les images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos. Les cours et les portefeuilles qu'elles montrent sont inventés. La page Wikipédia montre un vrai article du jour : texte de Wikipédia sous licence CC BY-SA 4.0, image du domaine public.*
 
 ## Le back office
 
@@ -67,7 +69,8 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | Heure | `pool.ntp.org` (NTP) | à chaque connexion au Wi-Fi, puis toutes les 3 heures | géré par le SDK | toujours |
 | Météo et fuseau horaire | `api.open-meteo.com` (HTTP) | 15 minutes | 1 minute | toujours : elle donne le fuseau |
 | Cours des cryptomonnaies | `api.coingecko.com` (HTTPS) | 2 minutes | 1 minute | si une crypto est choisie |
-| Cours des actions et ETF | `www.ls-tc.de` (HTTPS), une lecture par titre | 5 minutes en semaine de 5 h à 22 h 30 UTC, autour des heures de bourse ; 1 heure sinon | 1 minute | si un titre est choisi |
+| Cours des actions et ETF | `www.ls-tc.de` (HTTPS), une requête par titre, sur une connexion gardée ouverte | 5 minutes en semaine de 5 h à 22 h 30 UTC, autour des heures de bourse ; 1 heure sinon | 1 minute | si un titre est choisi |
+| Article du jour de Wikipédia | `fr.wikipedia.org` puis `thumb.wikimedia.org` pour l'image (HTTPS) | 1 heure pour voir si la rubrique a changé ; l'article et l'image seulement quand elle change | 10 minutes | toujours |
 | Agenda du hackerspace | `lghs.be` (HTTPS) | 1 heure | 10 minutes | toujours |
 | Agendas personnels | les adresses données (HTTPS) | 1 heure, chacun | 10 minutes | pour chaque adresse |
 | Personnes dans l'espace | `corquaid.github.io` (HTTPS) | 6 heures | 10 minutes | si la case est cochée |
@@ -95,6 +98,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | `src/weather.cpp`, `src/astro.cpp`, `src/space.cpp`, `src/air.cpp` | Météo et fuseau horaire, soleil et lune, personnes dans l'espace, capteur de particules |
 | `src/sonos.cpp` | Enceintes Sonos du réseau local |
 | `src/crypto.cpp`, `src/stocks.cpp` | Cours des cryptomonnaies, des actions et des ETF |
+| `src/wiki.cpp`, `src/jpeg.cpp` | Article du jour de Wikipédia ; décodage des images JPEG (pochette Sonos, image de l'article) |
 | `src/agenda.cpp`, `src/ical.cpp` | Agendas : lecture des calendriers au fil de l'eau, récurrences comprises |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
 | `src/web.cpp` | Back office et mise à jour par Wi-Fi |
@@ -144,6 +148,7 @@ Le pilote d'écran, le dessin, le rendu du texte et les pictogrammes météo son
 | [Open-Meteo](https://open-meteo.com), données sous licence CC BY 4.0, usage non commercial sans clé | Météo et fuseau horaire ; recherche de ville, appelée par le navigateur depuis le back office |
 | [CoinGecko](https://www.coingecko.com), accès public sans clé | Cours des cryptomonnaies ; recherche d'une crypto, appelée par le navigateur |
 | [Lang & Schwarz TradeCenter](https://www.ls-tc.de), données du site public, sans compte ni clé | Cours des actions et ETF, recherche d'un titre par son ISIN |
+| [Wikipédia](https://fr.wikipedia.org) en français, textes sous licence CC BY-SA 4.0 ; images de [Wikimedia Commons](https://commons.wikimedia.org), sous la licence de chacune | Article du jour, rubrique « Lumière sur » |
 | [International Space Station APIs](https://github.com/corquaid/international-space-station-APIs), liste tenue à jour par son auteur | Nombre de personnes dans l'espace |
 | Calendrier public du [Liège Hackerspace](https://lghs.be) | Événements de la page agenda |
 | Enceintes Sonos du réseau local (UPnP) | Morceau en cours |

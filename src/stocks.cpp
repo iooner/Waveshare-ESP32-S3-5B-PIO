@@ -17,11 +17,13 @@
 #define MAX_AGE_MS       (3UL * 60 * 60 * 1000)  // au-delà, mieux vaut ne rien afficher que des cours périmés
 #define HEAD_SIZE        2048                 // début d'une réponse : en-têtes, puis la clôture de la veille
 #define TAIL_SIZE        256                  // fin d'une réponse : le dernier cours
+#define BATCH            25                   // titres lus sur une même connexion
 
 static Stocks *current;  // titres choisis et leurs cours, en PSRAM
 static uint32_t version = 0, fetched_at;
 static bool valid = false;  // les cours sont ceux des titres choisis
 static uint8_t unknown = 0;
+static uint16_t round_seconds;  // durée du dernier tour de lecture
 static SemaphoreHandle_t lock;
 static TaskHandle_t task;
 static char *head, *tail;  // réponse en cours, en PSRAM
@@ -35,46 +37,128 @@ struct Known {
 };
 static Known *known;  // STOCKS_MAX, en PSRAM
 static uint8_t known_next;
-static volatile bool dirty;  // titres changés, à enregistrer par stocksLoop()
+static volatile bool dirty;        // titres changés, à enregistrer par stocksLoop()
+static volatile bool known_dirty;  // correspondances trouvées, idem : la tâche de lecture n'écrit pas en flash
 
-#define FILE_PATH  "/actions.bin"  // les titres, à la suite, dans la partition de fichiers (250 font 12 Ko)
+#define FILE_PATH   "/actions.bin"  // les titres, à la suite, dans la partition de fichiers (250 font 12 Ko)
+#define KNOWN_PATH  "/isin.bin"     // les correspondances trouvées : pas de recherche à chaque démarrage
 
-// Envoie une requête et garde le début et la fin de la réponse, qui peut faire plus de 20 Ko.
-// Faux si le serveur ne répond pas ou pas par 200.
+// Connexion gardée ouverte d'un titre à l'autre pendant un tour de lecture (HTTP/1.1, keep-alive) :
+// une seule négociation chiffrée pour tous les titres, au lieu d'une par titre. Seule la tâche de
+// lecture s'en sert.
+static NetworkClientSecure *tls;
+static uint8_t *in;  // ce qui a été reçu et pas encore lu, en PSRAM
+static size_t in_pos, in_len;
+#define IN_SIZE  1024
+
+// Prochain octet reçu, ou -1 si la connexion est coupée ou muette jusqu'à `deadline`
+static int nextByte(uint32_t deadline) {
+  while (in_pos == in_len) {
+    int got = tls->read(in, IN_SIZE);
+    if (got > 0) {
+      in_pos = 0, in_len = got;
+      break;
+    }
+    if (!tls->connected() || (int32_t)(millis() - deadline) > 0) return -1;
+    delay(2);
+  }
+  return in[in_pos++];
+}
+
+// Une ligne d'en-tête ou de taille de morceau, sans son retour à la ligne. Faux si la connexion casse.
+static bool readLine(char *out, size_t cap, uint32_t deadline) {
+  size_t n = 0;
+  for (int c; (c = nextByte(deadline)) >= 0;) {
+    if (c == '\n') {
+      while (n && out[n - 1] == '\r') n--;
+      out[n] = 0;
+      return true;
+    }
+    if (n < cap - 1) out[n++] = c;
+  }
+  return false;
+}
+
+// Garde le début (`head`) et la fin (`tail`) du corps de la réponse, qui peut faire plus de 20 Ko
+static size_t head_len, tail_len;
+static void keep(const uint8_t *p, size_t n) {
+  size_t take = min<size_t>(n, HEAD_SIZE - 1 - head_len);
+  memcpy(head + head_len, p, take);
+  head_len += take;
+  // La fin : ce qui restait, décalé, puis ce bloc
+  size_t add = min<size_t>(n, TAIL_SIZE - 1), stay = min<size_t>(tail_len, TAIL_SIZE - 1 - add);
+  memmove(tail, tail + tail_len - stay, stay);
+  memcpy(tail + stay, p + n - add, add);
+  tail_len = stay + add;
+}
+
+// Lit `n` octets du corps ; n = SIZE_MAX : jusqu'à la fermeture de la connexion
+static bool readBody(size_t n, uint32_t deadline) {
+  while (n) {
+    if (in_pos == in_len && nextByte(deadline) >= 0) in_pos--;  // remplit le tampon sans rien consommer
+    if (in_pos == in_len) return n == SIZE_MAX;
+    size_t take = min(n, in_len - in_pos);
+    keep(in + in_pos, take);
+    in_pos += take;
+    if (n != SIZE_MAX) n -= take;
+  }
+  return true;
+}
+
+static void disconnect() {
+  if (tls) tls->stop();
+  in_pos = in_len = 0;
+}
+
+// Envoie une requête et garde le début et la fin du corps de la réponse. Faux si le serveur ne
+// répond pas ou pas par 200. La connexion reste ouverte pour la requête suivante.
 static bool get(const char *path) {
-  // Une connexion à la fois, et rendue entre deux titres : avec beaucoup de titres, un tour de lecture
-  // dure plusieurs minutes, et la météo, la crypto et les agendas passent entre deux
-  NetHttps one_at_a_time;
-  NetworkClientSecure tls;
-  // Le certificat du serveur n'est pas vérifié : rien de secret n'est envoyé, et ce qui est reçu
-  // n'est qu'affiché. Un tiers sur le chemin pourrait au pire fausser les cours à l'écran.
-  tls.setInsecure();
-  if (!tls.connect(HOST, 443, HTTP_TIMEOUT_MS)) return false;
-  // HTTP/1.0 : la réponse arrive d'un bloc, puis le serveur ferme la connexion
-  tls.printf("GET %s HTTP/1.0\r\nHost: " HOST "\r\nUser-Agent: ecran-esp32\r\nAccept: application/json\r\n\r\n", path);
-  size_t head_len = 0, tail_len = 0;
-  uint8_t chunk[512];
-  uint32_t t0 = millis();
-  while (millis() - t0 < HTTP_TIMEOUT_MS && (tls.connected() || tls.available())) {
-    int got = tls.read(chunk, sizeof(chunk));
-    if (got <= 0) {
-      delay(5);
+  for (int attempt = 0; attempt < 2; attempt++) {
+    // Connexion fermée par le serveur depuis la requête précédente : on en rouvre une, une fois
+    if (!tls->connected()) {
+      disconnect();
+      if (!tls->connect(HOST, 443, HTTP_TIMEOUT_MS)) return false;
+    }
+    tls->printf("GET %s HTTP/1.1\r\nHost: " HOST "\r\nUser-Agent: ecran-esp32\r\nAccept: application/json\r\n\r\n", path);
+    uint32_t deadline = millis() + HTTP_TIMEOUT_MS;
+    char line[128];
+    if (!readLine(line, sizeof(line), deadline)) {
+      disconnect();
       continue;
     }
-    size_t take = min<size_t>(got, HEAD_SIZE - 1 - head_len);
-    memcpy(head + head_len, chunk, take);
-    head_len += take;
-    // La fin : ce qui restait, décalé, puis ce morceau
-    size_t keep = min<size_t>(tail_len, TAIL_SIZE - 1 - min<size_t>(got, TAIL_SIZE - 1));
-    memmove(tail, tail + tail_len - keep, keep);
-    size_t add = min<size_t>(got, TAIL_SIZE - 1);
-    memcpy(tail + keep, chunk + got - add, add);
-    tail_len = keep + add;
+    bool ok = strncmp(line, "HTTP/1.", 7) == 0 && strncmp(line + 8, " 200", 4) == 0;
+    // En-têtes : la façon dont le corps est délimité, et si la connexion reste ouverte
+    bool chunked = false, close = false;
+    size_t length = SIZE_MAX;
+    while (readLine(line, sizeof(line), deadline) && line[0]) {
+      if (strncasecmp(line, "Transfer-Encoding:", 18) == 0 && strcasestr(line, "chunked")) chunked = true;
+      else if (strncasecmp(line, "Content-Length:", 15) == 0) length = strtoul(line + 15, nullptr, 10);
+      else if (strncasecmp(line, "Connection:", 11) == 0 && strcasestr(line, "close")) close = true;
+    }
+    head_len = tail_len = 0;
+    bool complete;
+    if (chunked) {
+      // Des morceaux, chacun précédé de sa taille en hexadécimal ; le dernier est vide
+      complete = false;
+      while (readLine(line, sizeof(line), deadline)) {
+        size_t n = strtoul(line, nullptr, 16);
+        if (n == 0) {
+          while (readLine(line, sizeof(line), deadline) && line[0]) {}  // en-têtes de fin, ligne vide
+          complete = true;
+          break;
+        }
+        if (!readBody(n, deadline) || !readLine(line, sizeof(line), deadline)) break;
+      }
+    } else {
+      complete = readBody(length, deadline);
+      close |= length == SIZE_MAX;
+    }
+    head[head_len] = 0;
+    tail[tail_len] = 0;
+    if (!complete || close) disconnect();
+    if (complete) return ok;
   }
-  head[head_len] = 0;
-  tail[tail_len] = 0;
-  tls.stop();
-  return strncmp(head, "HTTP/1.", 7) == 0 && strncmp(head + 8, " 200", 4) == 0;
+  return false;
 }
 
 // Copie une chaîne JSON qui commence à `from` (après son guillemet), échappements compris
@@ -101,7 +185,7 @@ static void jsonString(const char *from, char *out, size_t cap) {
 static int32_t lookup(const char *isin, char *title, size_t cap) {
   for (uint8_t i = 0; i < STOCKS_MAX; i++) {
     const Known &k = known[i];
-    if (strcmp(k.isin, isin) == 0) {
+    if (k.id && strcmp(k.isin, isin) == 0) {
       strlcpy(title, k.title, cap);
       return k.id;
     }
@@ -132,6 +216,7 @@ static int32_t lookup(const char *isin, char *title, size_t cap) {
     dropUnsupported(k.title);
   }
   strlcpy(title, k.title, cap);
+  if (k.id) known_dirty = true;
   return k.id;
 }
 
@@ -163,17 +248,24 @@ static bool fetch() {
   static Stocks &s = *(Stocks *)heap_caps_malloc(sizeof(Stocks), MALLOC_CAP_SPIRAM);  // seule cette tâche s'en sert
   stocksGet(s);
   if (s.count == 0) return true;
+  uint32_t t0 = millis();
 
+  // Par lots : la connexion est rendue entre deux lots, pour que la météo, la crypto et les
+  // agendas passent même quand il y a beaucoup de titres
   uint8_t missing = 0;
-  for (uint8_t i = 0; i < s.count; i++) {
-    s.price[i] = s.previous[i] = 0;
-    int32_t id = lookup(s.stocks[i].isin, s.title[i], sizeof(s.title[i]));
-    if (id < 0) return false;
-    if (id == 0) {
+  for (uint8_t start = 0; start < s.count; start += BATCH) {
+    NetHttps one_at_a_time;
+    for (uint8_t i = start; i < s.count && i < start + BATCH; i++) {
+      s.price[i] = s.previous[i] = 0;
+      int32_t id = lookup(s.stocks[i].isin, s.title[i], sizeof(s.title[i]));
+      if (id > 0 && quote(id, s.price[i], s.previous[i])) continue;
+      if (id != 0) {
+        disconnect();
+        return false;
+      }
       missing++;
-      continue;
     }
-    if (!quote(id, s.price[i], s.previous[i])) return false;
+    disconnect();
   }
 
   xSemaphoreTake(lock, portMAX_DELAY);
@@ -185,6 +277,7 @@ static bool fetch() {
     memcpy(current->price, s.price, sizeof(s.price));
     memcpy(current->previous, s.previous, sizeof(s.previous));
     unknown = missing;
+    round_seconds = (millis() - t0 + 500) / 1000;
     valid = true;
     version++;
     fetched_at = millis();
@@ -220,8 +313,15 @@ void stocksBegin() {
   lock = xSemaphoreCreateMutex();
   current = (Stocks *)heap_caps_calloc(1, sizeof(Stocks), MALLOC_CAP_SPIRAM);
   known = (Known *)heap_caps_calloc(STOCKS_MAX, sizeof(Known), MALLOC_CAP_SPIRAM);
+  in = (uint8_t *)heap_caps_malloc(IN_SIZE, MALLOC_CAP_SPIRAM);
   // La partition est formatée au premier démarrage qui en a besoin
   if (LittleFS.begin(true)) {
+    File k = LittleFS.open(KNOWN_PATH, "r");
+    if (k) {
+      size_t len = min(k.size() - k.size() % sizeof(Known), STOCKS_MAX * sizeof(Known));
+      if (k.read((uint8_t *)known, len) == len) known_next = (len / sizeof(Known)) % STOCKS_MAX;
+      k.close();
+    }
     File f = LittleFS.open(FILE_PATH, "r");
     if (f) {
       size_t len = f.size() - f.size() % sizeof(Stock);
@@ -249,7 +349,11 @@ void stocksBegin() {
   tail = head + HEAD_SIZE;
   // Pile en PSRAM, pour garder la RAM interne à l'écran : permis parce que la tâche n'écrit jamais
   // en flash (les réglages sont enregistrés par la tâche qui appelle stocksConfigure())
-  if (head) xTaskCreatePinnedToCoreWithCaps(stocksTask, "actions", 12288, nullptr, 1, &task, 0, MALLOC_CAP_SPIRAM);
+  tls = new NetworkClientSecure();
+  // Le certificat du serveur n'est pas vérifié : rien de secret n'est envoyé, et ce qui est reçu
+  // n'est qu'affiché. Un tiers sur le chemin pourrait au pire fausser les cours à l'écran.
+  tls->setInsecure();
+  if (head && in) xTaskCreatePinnedToCoreWithCaps(stocksTask, "actions", 12288, nullptr, 1, &task, 0, MALLOC_CAP_SPIRAM);
 }
 
 uint32_t stocksVersion() {
@@ -260,8 +364,13 @@ uint32_t stocksVersion() {
 }
 
 void stocksGet(Stocks &out) {
+  // Les titres réels seulement, pas les 250 emplacements
   xSemaphoreTake(lock, portMAX_DELAY);
-  out = *current;
+  uint8_t n = out.count = current->count;
+  memcpy(out.stocks, current->stocks, n * sizeof(Stock));
+  memcpy(out.title, current->title, n * sizeof(current->title[0]));
+  memcpy(out.price, current->price, n * sizeof(double));
+  memcpy(out.previous, current->previous, n * sizeof(double));
   xSemaphoreGive(lock);
 }
 
@@ -270,6 +379,10 @@ int32_t stocksAge() {
   int32_t age = valid ? (millis() - fetched_at) / 1000 : -1;
   xSemaphoreGive(lock);
   return age;
+}
+
+uint16_t stocksRoundSeconds() {
+  return round_seconds;
 }
 
 uint8_t stocksUnknown() {
@@ -299,7 +412,29 @@ void stocksConfigure(const Stock *stocks, uint8_t count) {
   if (!same_isins && task) xTaskNotifyGive(task);
 }
 
-void stocksLoop() {
+// Enregistre les correspondances trouvées : celles qui ont un numéro, les inconnues seront recherchées
+static void saveKnown() {
+  static Known *copy = (Known *)heap_caps_malloc(STOCKS_MAX * sizeof(Known), MALLOC_CAP_SPIRAM);  // seule la boucle passe ici
+  size_t n = 0;
+  for (uint8_t i = 0; i < STOCKS_MAX; i++) {
+    if (known[i].id) copy[n++] = known[i];
+  }
+  File f = LittleFS.open(KNOWN_PATH, "w");
+  if (f) f.write((const uint8_t *)copy, n * sizeof(Known)), f.close();
+}
+
+void stocksLoop(bool dark) {
+  static uint32_t waiting_since;
+  if (!dirty && !known_dirty) {
+    waiting_since = millis();
+    return;
+  }
+  if (!dark && millis() - waiting_since < 10UL * 60 * 1000) return;
+  waiting_since = millis();
+  if (known_dirty) {
+    known_dirty = false;
+    saveKnown();
+  }
   if (!dirty) return;
   dirty = false;
   static Stock *copy = (Stock *)heap_caps_malloc(STOCKS_MAX * sizeof(Stock), MALLOC_CAP_SPIRAM);  // seule la boucle passe ici

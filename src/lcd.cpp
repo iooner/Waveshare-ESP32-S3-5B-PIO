@@ -53,7 +53,10 @@ static uint8_t dirty_count = 0;
 #define CELL_X0        32
 #define ROW_CELLS      ((LCD_WIDTH - 2 * CELL_X0) / CELL_PX)
 #define CELL_COUNT     3600  // cases disponibles (32 octets chacune)
-#define HEAD_COUNT     512   // lignes compactes disponibles (62 octets d'en-tête chacune)
+#define HEAD_COUNT     512   // lignes compactes disponibles (32 octets d'en-tête chacune)
+// Les palettes de 16 couleurs sont communes : la plupart des lignes ont les mêmes (un texte blanc
+// sur fond noir et son antialiasing). Garder la sienne à chaque ligne coûtait 16 Ko.
+#define PAL_COUNT      64    // palettes disponibles (32 octets chacune) ; mesuré : 20 au plus, page air comprise
 #define NONE           0xFFFF
 #define RAW_NARROW_PX  128   // contenu assez étroit pour être lu en PSRAM sans risque
 
@@ -66,8 +69,19 @@ struct RowInfo {
 };
 
 struct RowHead {
-  uint16_t palette[16];
   uint16_t cell[ROW_CELLS];  // case de chaque tranche de 64 pixels marquée dans le masque
+  uint8_t pal;               // palette où lire les couleurs de ses cases
+};
+
+struct Palette {
+  uint16_t color[16];
+};
+
+// Ce que seule la description des lignes consulte, jamais le balayage
+struct PaletteUse {
+  uint16_t refs;     // lignes compactes qui s'en servent, affichées ou en attente de l'être
+  uint16_t defined;  // couleurs fixées, un bit chacune : les autres places sont libres
+  uint32_t bloom;    // un bit par couleur fixée, pour écarter vite une palette qui n'a pas les bonnes
 };
 
 struct Cell {
@@ -82,6 +96,9 @@ struct RowUpdate {
 static RowInfo rows[LCD_HEIGHT];      // décrit le framebuffer affiché ; modifié seulement entre deux images
 static RowHead *heads;
 static Cell *cells;
+static Palette *palettes;   // en RAM interne : le balayage les lit
+static PaletteUse *pal_use;  // en PSRAM
+static uint8_t free_pals[PAL_COUNT], free_pal_count, free_pal_low = PAL_COUNT;
 static uint16_t free_heads[HEAD_COUNT], free_head_count;
 static uint16_t *free_cells, free_cell_count;  // en PSRAM, comme old_rows : le balayage ne les lit pas
 static RowInfo *old_rows;                      // lignes remplacées par l'image en cours de présentation
@@ -146,15 +163,104 @@ static inline __attribute__((always_inline)) void dimSpan(uint16_t *px, uint32_t
   for (n >>= 1; n; n--, p++) *p = dim(*p, f);
 }
 
+static void releasePalette(uint8_t p) {
+  if (--pal_use[p].refs) return;
+  pal_use[p].defined = 0;
+  pal_use[p].bloom = 0;
+  free_pals[free_pal_count++] = p;
+}
+
 static void releaseRow(const RowInfo &r, const RowInfo &keep) {
   if (r.head == NONE) return;
   const RowHead &h = heads[r.head];
+  releasePalette(h.pal);
   for (uint8_t c = 0; c < ROW_CELLS; c++) {
     if (!(r.mask >> c & 1)) continue;
     bool shared = keep.head != NONE && (keep.mask >> c & 1) && heads[keep.head].cell[c] == h.cell[c];
     if (!shared) free_cells[free_cell_count++] = h.cell[c];
   }
   free_heads[free_head_count++] = r.head;
+}
+
+static inline uint32_t bloomBit(uint16_t color) {
+  return 1u << ((color * 0x9E37u) >> 11 & 31);
+}
+
+// Place les `n` couleurs d'une ligne dans la palette `p` : `slot[i]` reçoit la place de la couleur i.
+// Avec `want`, chaque couleur doit aller à la place voulue ; sinon elle va là où la palette l'a
+// déjà, ou à une place libre. Les places libres prises sont fixées seulement si `commit`. Renvoie
+// le nombre de places à fixer, ou -1 si la ligne n'y tient pas. Une palette n'a jamais deux fois
+// la même couleur : une couleur se retrouve donc toujours à la même place.
+static int fitPalette(uint8_t p, const uint16_t *colors, uint8_t n, const int8_t *want, uint8_t *slot, bool commit) {
+  Palette &pal = palettes[p];
+  PaletteUse &use = pal_use[p];
+  uint16_t defined = use.defined;
+  int added = 0;
+  for (uint8_t i = 0; i < n; i++) {
+    uint16_t c = colors[i];
+    int found = -1;
+    if (use.bloom & bloomBit(c)) {
+      for (uint8_t k = 0; k < 16; k++) {
+        if ((defined >> k & 1) && pal.color[k] == c) {
+          found = k;
+          break;
+        }
+      }
+    }
+    int at = want ? want[i] : found;
+    if (want && found >= 0 && found != at) return -1;  // la couleur est déjà ailleurs
+    if (at < 0) {
+      // Première place libre
+      for (at = 0; at < 16 && (defined >> at & 1); at++) {}
+      if (at == 16) return -1;
+    } else if (found < 0 && (defined >> at & 1)) {
+      return -1;  // place voulue déjà prise par une autre couleur
+    }
+    if (!(defined >> at & 1)) {
+      defined |= 1 << at;
+      added++;
+      if (commit) pal.color[at] = c, use.bloom |= bloomBit(c);
+    }
+    slot[i] = at;
+  }
+  if (commit) use.defined = defined;
+  return added;
+}
+
+// Choisit la palette d'une ligne et y place ses couleurs. -1 si aucune ne convient et que la
+// réserve est vide. `want` : les places de l'ancienne ligne, quand la nouvelle n'en diffère que par
+// ses couleurs (teinte de nuit) ; nul sinon. Dans l'ordre : la palette de l'ancienne ligne, pour que
+// leurs cases restent partagées ; une palette qui a déjà toutes les couleurs ; celle qui en
+// demande le moins à ajouter ; une palette neuve.
+static int choosePalette(const uint16_t *colors, uint8_t n, int old_pal, const int8_t *want, uint8_t *slot) {
+  // D'abord aux places voulues, s'il y en a ; sinon, ou à défaut, n'importe où
+  for (int attempt = want ? 0 : 1; attempt < 2; attempt++) {
+    const int8_t *w = attempt ? nullptr : want;
+    if (old_pal >= 0 && fitPalette(old_pal, colors, n, w, slot, false) >= 0) {
+      fitPalette(old_pal, colors, n, w, slot, true);
+      pal_use[old_pal].refs++;
+      return old_pal;
+    }
+    int best = -1, best_added = 17;
+    for (int p = 0; p < PAL_COUNT && best_added; p++) {
+      if (!pal_use[p].refs || p == old_pal) continue;
+      int added = fitPalette(p, colors, n, w, slot, false);
+      if (added >= 0 && added < best_added) best = p, best_added = added;
+    }
+    if (best >= 0) {
+      fitPalette(best, colors, n, w, slot, true);
+      pal_use[best].refs++;
+      return best;
+    }
+    if (free_pal_count) {
+      uint8_t p = free_pals[--free_pal_count];
+      if (free_pal_count < free_pal_low) free_pal_low = free_pal_count;
+      fitPalette(p, colors, n, w, slot, true);
+      pal_use[p].refs = 1;
+      return p;
+    }
+  }
+  return -1;
 }
 
 // Décrit une ligne du framebuffer de dessin. Faux si la réserve est vide alors que la ligne
@@ -177,58 +283,85 @@ static bool describeRow(const uint16_t *src, int16_t y, RowInfo &r) {
   if (x0 < CELL_X0 || x1 > LCD_WIDTH - CELL_X0) return true;  // déborde des cases : lue en PSRAM
   if (free_head_count == 0) return false;
 
-  RowInfo packed = r;
-  packed.head = free_heads[--free_head_count];
-  RowHead &h = heads[packed.head];
-  h.palette[0] = bg;
-  uint8_t colors = 1, last_index = 0;
-  uint16_t last = bg;
-  bool full = false, many = false;
-  const RowInfo &old = rows[y];  // la ligne telle qu'elle est affichée
-  for (int c = (x0 - CELL_X0) / CELL_PX; c <= (x1 - 1 - CELL_X0) / CELL_PX && !full && !many; c++) {
-    uint8_t px[CELL_PX / 2];
-    bool used = false;
-    for (int k = 0; k < CELL_PX && !many; k++) {
+  // Les couleurs de la ligne, dans l'ordre où elles apparaissent (le fond d'abord), et ses cases
+  // en numéros de cette liste. Plus de 16 couleurs : la ligne sera lue en PSRAM.
+  static uint8_t px[ROW_CELLS][CELL_PX / 2];  // seule la boucle principale décrit des lignes
+  uint16_t colors[16] = {bg}, last = bg;
+  uint8_t n = 1, last_index = 0;
+  uint16_t used = 0;
+  for (int c = (x0 - CELL_X0) / CELL_PX; c <= (x1 - 1 - CELL_X0) / CELL_PX; c++) {
+    for (int k = 0; k < CELL_PX; k++) {
       int x = CELL_X0 + c * CELL_PX + k;
       uint16_t col = image(x) ? bg : src[x];
       if (col != last) {
         uint8_t i = 0;
-        while (i < colors && h.palette[i] != col) i++;
-        if (i == colors) {
-          if (colors == 16) many = true;
-          else h.palette[colors++] = col;
+        while (i < n && colors[i] != col) i++;
+        if (i == n) {
+          if (n == 16) return true;
+          colors[n++] = col;
         }
         last = col;
         last_index = i;
       }
-      used |= last_index != 0;
-      if (k & 1) px[k / 2] |= last_index;
-      else px[k / 2] = last_index << 4;
+      if (last_index) used |= 1 << c;
+      if (k & 1) px[c][k / 2] |= last_index;
+      else px[c][k / 2] = last_index << 4;
     }
-    if (!used || many) continue;
+  }
+
+  // Même dessin que la ligne affichée, autres couleurs ? Chaque couleur garde alors sa place
+  // d'avant, et les cases restent partagées.
+  const RowInfo &old = rows[y];  // la ligne telle qu'elle est affichée
+  int old_pal = old.head != NONE ? heads[old.head].pal : -1;
+  int8_t want[16];
+  bool same_drawing = old_pal >= 0 && used == old.mask;
+  if (same_drawing) {
+    memset(want, -1, sizeof(want));
+    int8_t back[16];
+    memset(back, -1, sizeof(back));
+    const RowHead &oh = heads[old.head];
+    for (int c = 0; c < ROW_CELLS && same_drawing; c++) {
+      if (!(used >> c & 1)) continue;
+      const uint8_t *o = cells[oh.cell[c]].px;
+      for (int b = 0; b < CELL_PX / 2 && same_drawing; b++) {
+        for (int half = 0; half < 2; half++) {
+          uint8_t l = half ? px[c][b] & 15 : px[c][b] >> 4, w = half ? o[b] & 15 : o[b] >> 4;
+          if (want[l] < 0 && back[w] < 0) want[l] = w, back[w] = l;
+          else if (want[l] != w || back[w] != l) same_drawing = false;
+        }
+      }
+    }
+    for (uint8_t i = 0; i < n && same_drawing; i++) same_drawing = want[i] >= 0;
+  }
+  uint8_t slot[16];
+  int pal = choosePalette(colors, n, old_pal, same_drawing ? want : nullptr, slot);
+  if (pal < 0) return false;
+
+  RowInfo packed = r;
+  packed.head = free_heads[--free_head_count];
+  RowHead &h = heads[packed.head];
+  h.pal = pal;
+  for (int c = 0; c < ROW_CELLS; c++) {
+    if (!(used >> c & 1)) continue;
+    for (int b = 0; b < CELL_PX / 2; b++) px[c][b] = slot[px[c][b] >> 4] << 4 | slot[px[c][b] & 15];
     // Case identique à celle de la ligne affichée : les deux lignes la partagent. Un chiffre
     // d'horloge qui change ne prend ainsi que ses propres cases. Une case ne contient que des
-    // numéros de couleur, lus dans la palette de chaque ligne : quand seules les couleurs
-    // changent (teinte de nuit), toutes les cases se partagent.
+    // places dans une palette : elle se partage même quand la palette change (teinte de nuit).
     if (old.head != NONE && (old.mask >> c & 1)) {
       const RowHead &oh = heads[old.head];
-      if (memcmp(cells[oh.cell[c]].px, px, sizeof(px)) == 0) {
+      if (memcmp(cells[oh.cell[c]].px, px[c], CELL_PX / 2) == 0) {
         h.cell[c] = oh.cell[c];
         packed.mask |= 1 << c;
         continue;
       }
     }
     if (free_cell_count == 0) {
-      full = true;
-      break;
+      releaseRow(packed, old);
+      return false;  // réserve vide : à réessayer
     }
     h.cell[c] = free_cells[--free_cell_count];
-    memcpy(cells[h.cell[c]].px, px, sizeof(px));
+    memcpy(cells[h.cell[c]].px, px[c], CELL_PX / 2);
     packed.mask |= 1 << c;
-  }
-  if (full || many) {
-    releaseRow(packed, old);
-    return many;  // trop de couleurs : la ligne sera lue en PSRAM ; réserve vide : à réessayer
   }
   packed.x0 = packed.x1 = 0;
   r = packed;
@@ -272,10 +405,10 @@ static bool IRAM_ATTR onBounceEmpty(esp_lcd_panel_handle_t, void *buf, int pos_p
     fillPairs(out + r.x1, bg, LCD_WIDTH - r.x1);
     if (r.head != NONE) {
       const RowHead &h = heads[r.head];
-      const uint16_t *palette = h.palette;
+      const uint16_t *palette = palettes[h.pal].color;
       uint16_t dimmed[16];
       if (faded) {
-        for (uint32_t c = 0; c < 16; c++) dimmed[c] = dim(h.palette[c], f);
+        for (uint32_t c = 0; c < 16; c++) dimmed[c] = dim(palette[c], f);
         palette = dimmed;
       }
       for (uint32_t c = 0, m = r.mask; m; c++, m >>= 1) {
@@ -352,6 +485,10 @@ uint32_t lcdLateChunks() {
   return late_chunks_total;
 }
 
+uint8_t lcdPalettesLow() {
+  return free_pal_low;
+}
+
 uint32_t lcdMaxCopyUs() {
   uint32_t cycles = max_copy_cycles;
   max_copy_cycles = 0;
@@ -392,9 +529,12 @@ bool lcdBegin() {
   for (RowInfo &r : rows) r = {0, NONE, 0, 0, 0, 0, 0};
   heads = (RowHead *)heap_caps_malloc(HEAD_COUNT * sizeof(RowHead), MALLOC_CAP_INTERNAL);
   cells = (Cell *)heap_caps_malloc(CELL_COUNT * sizeof(Cell), MALLOC_CAP_INTERNAL);
+  palettes = (Palette *)heap_caps_calloc(PAL_COUNT, sizeof(Palette), MALLOC_CAP_INTERNAL);
+  pal_use = (PaletteUse *)heap_caps_calloc(PAL_COUNT, sizeof(PaletteUse), MALLOC_CAP_SPIRAM);
   free_cells = (uint16_t *)heap_caps_malloc(CELL_COUNT * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
   old_rows = (RowInfo *)heap_caps_malloc(LCD_HEIGHT * sizeof(RowInfo), MALLOC_CAP_SPIRAM);
-  if (!heads || !cells || !free_cells || !old_rows) return false;
+  if (!heads || !cells || !palettes || !pal_use || !free_cells || !old_rows) return false;
+  for (free_pal_count = 0; free_pal_count < PAL_COUNT; free_pal_count++) free_pals[free_pal_count] = PAL_COUNT - 1 - free_pal_count;
   for (free_head_count = 0; free_head_count < HEAD_COUNT; free_head_count++) free_heads[free_head_count] = free_head_count;
   for (free_cell_count = 0; free_cell_count < CELL_COUNT; free_cell_count++) free_cells[free_cell_count] = free_cell_count;
 

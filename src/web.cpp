@@ -8,6 +8,7 @@
 #include "brightness.h"
 #include "crypto.h"
 #include "stocks.h"
+#include "wiki.h"
 #include "gfx.h"
 #include "lcd.h"
 #include "plugin.h"
@@ -169,9 +170,9 @@ static const char FOOTER[] =
 static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
-    "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Actions<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Particules<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
-    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, actions %u, agenda %u</b></div></section>";
+    "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs, palettes libres %u</b></div>"
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Actions<b>%s</b></div><div>Wikipédia<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Particules<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, actions %u, wiki %u, agenda %u</b></div></section>";
 
 static const char SCRIPT[] =
     "<script>let F=document.forms[0];"
@@ -600,16 +601,26 @@ static void sendPage(WiFiClient &c) {
   if (crypto.count == 0) strlcpy(quotes, "aucune choisie", sizeof(quotes));
   else if (quotes_age < 0) strlcpy(quotes, "cours pas encore lus", sizeof(quotes));
   else snprintf(quotes, sizeof(quotes), "cours lus il y a %ld min", (long)(quotes_age / 60));
-  char shares_state[60];
+  static char shares_state[60];
   int32_t shares_age = stocksAge();
   if (shares.count == 0) strlcpy(shares_state, "aucune choisie", sizeof(shares_state));
   else if (shares_age < 0) strlcpy(shares_state, "cours pas encore lus", sizeof(shares_state));
-  else snprintf(shares_state, sizeof(shares_state), "cours lus il y a %ld min", (long)(shares_age / 60));
+  else snprintf(shares_state, sizeof(shares_state), "cours lus il y a %ld min, en %u s", (long)(shares_age / 60), stocksRoundSeconds());
   if (stocksUnknown()) {
     size_t n = strlen(shares_state);
     snprintf(shares_state + n, sizeof(shares_state) - n, ", %u ISIN inconnu%s", stocksUnknown(), stocksUnknown() > 1 ? "s" : "");
   }
-  char agenda[160];
+  // Wikipédia : le titre du jour, sans ce qui casserait la page
+  static char wiki_state[160];  // les textes de l'état sont hors de la pile, qui est comptée ; une seule tâche passe ici
+  strlcpy(wiki_state, "pas encore lu", sizeof(wiki_state));
+  if (wikiAge() >= 0) {
+    static WikiArticle w;  // hors de la pile ; une seule tâche passe ici
+    wikiGet(w);
+    static char title[64];
+    attribute(w.title, title, sizeof(title));
+    snprintf(wiki_state, sizeof(wiki_state), "%s, lu il y a %ld min%s", title, (long)(wikiAge() / 60), w.image ? "" : ", sans image");
+  }
+  static char agenda[160];
   int32_t lghs_age = agendaAge(AGENDA_LGHS), mine_age = agendaAge(AGENDA_MINE);
   int n = lghs_age < 0 ? snprintf(agenda, sizeof(agenda), "LGHS pas encore lu")
                        : snprintf(agenda, sizeof(agenda), "LGHS lu il y a %ld min", (long)(lghs_age / 60));
@@ -653,9 +664,9 @@ static void sendPage(WiFiClient &c) {
   add(STATE, pluginCurrentName(), t.tm_hour, t.tm_min, sun, minutes / 60, minutes % 60, boot, (int)WiFi.RSSI(),
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
-      (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
-      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, shares_state, agenda, spacePeople(), dust, esp_ota_get_running_partition()->label, stackMargin("web"),
-      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("actions"), stackMargin("agenda"));
+      (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(), (unsigned)lcdPalettesLow(),
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, shares_state, wiki_state, agenda, spacePeople(), dust, esp_ota_get_running_partition()->label, stackMargin("web"),
+      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("actions"), stackMargin("wiki"), stackMargin("agenda"));
   add("%s", FOOTER);
   add("%s", SCRIPT);
   // Une page coupée perdrait son script, et plus aucun réglage ne s'enregistrerait
