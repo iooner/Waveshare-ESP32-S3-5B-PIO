@@ -1,5 +1,6 @@
 // Page fortune : ce que valent les actions (stocks.h) et les cryptos (crypto.h) dont une quantité
-// est saisie dans le back office, chacune avec sa variation, puis leur total
+// est saisie dans le back office, chacune avec ce qu'elle a gagné ou perdu, en euros et en pour
+// cent, puis leur total
 #include "crypto.h"
 #include "fonts/font_sans24.h"
 #include "fonts/font_sans32.h"
@@ -12,9 +13,11 @@
 #define ROW_H       80
 #define TOTAL_H     110  // filet, puis le total
 #define NOTE_H      60   // la note sous le total
-#define LABEL_X     162
-#define VALUE_R     690  // bord droit des montants
-#define CHANGE_R    862  // bord droit des variations
+#define LABEL_X     112
+#define LABEL_W     240
+#define VALUE_R     600  // bord droit des montants : "123 456 €" fait 216 pixels en grand
+#define GAIN_R      790  // bord droit des gains ou pertes en euros
+#define CHANGE_R    912  // bord droit des variations en pour cent ; le tableau est centré
 
 static uint32_t shown_stocks, shown_crypto;  // versions affichées
 
@@ -56,13 +59,26 @@ static Holding coins() {
   return h;
 }
 
+// Gain ou perte en euros, de la même couleur que la variation en pour cent : "+123,45 €", "-1 234 €"
+static void gain(int16_t x, int16_t y, int16_t w, double delta) {
+  char text[32];
+  bool flat = fabs(delta) < 0.005;
+  text[0] = delta < 0 ? '-' : '+';
+  // Sous 1 €, deux décimales aussi : formatEuros() en met quatre, pour les cours des petites cryptos
+  if (fabs(delta) >= 0.995) formatEuros(fabs(delta), text + !flat, sizeof(text) - 1);
+  else snprintf(text + !flat, sizeof(text) - 1, "0,%02d €", flat ? 0 : (int)lround(fabs(delta) * 100) % 100);
+  gfxTextBox(x, y, w, text, font_sans32, flat ? COLOR_TEXT : delta < 0 ? COLOR_DOWN : COLOR_UP, COLOR_BG, GFX_RIGHT);
+}
+
 static void line(int16_t y, const char *label, const Holding &h, const GfxFont &font) {
   char text[32];
   int16_t dy = (font.line_height - font_sans32.line_height) / 2 + 2;
-  gfxTextBox(LABEL_X, y, 260, label, font, COLOR_TEXT, COLOR_BG);
+  gfxTextBox(LABEL_X, y, LABEL_W, label, font, COLOR_TEXT, COLOR_BG);
   formatEuros(h.value, text, sizeof(text));
-  gfxTextBox(LABEL_X + 260, y, VALUE_R - LABEL_X - 260, text, font, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
-  if (h.before > 0) pluginDrawChange(VALUE_R + 8, y + dy, CHANGE_R - VALUE_R - 8, (h.value / h.before - 1) * 100, font_sans32);
+  gfxTextBox(LABEL_X + LABEL_W, y, VALUE_R - LABEL_X - LABEL_W, text, font, COLOR_TEXT, COLOR_BG, GFX_RIGHT);
+  if (h.before <= 0) return;
+  gain(VALUE_R + 8, y + dy, GAIN_R - VALUE_R - 8, h.value - h.before);
+  pluginDrawChange(GAIN_R + 8, y + dy, CHANGE_R - GAIN_R - 8, (h.value / h.before - 1) * 100, font_sans32);
 }
 
 static void draw() {
