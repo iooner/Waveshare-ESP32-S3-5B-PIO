@@ -9,7 +9,8 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 | | |
 | :---: | :---: |
 | <img src="docs/ecran-nuit.png" width="400"><br>**Accueil, la nuit** | <img src="docs/ecran-sonos.png" width="400"><br>**Sonos** |
-| <img src="docs/ecran-crypto.png" width="400"><br>**Cryptomonnaies** | <img src="docs/ecran-agendas.png" width="400"><br>**Agendas personnels** |
+| <img src="docs/ecran-crypto.png" width="400"><br>**Cryptomonnaies** | <img src="docs/ecran-actions.png" width="400"><br>**Actions et ETF** |
+| <img src="docs/ecran-fortune.png" width="400"><br>**Fortune** | <img src="docs/ecran-agendas.png" width="400"><br>**Agendas personnels** |
 | <img src="docs/ecran-agenda.png" width="400"><br>**Agenda du hackerspace** | <img src="docs/back-office.png" width="210"><br>**Back office** |
 
 - **Accueil** : heure et date, météo des six heures à venir avec annonce de pluie, lever et coucher du soleil, phase de la lune, nombre de personnes dans l'espace, particules fines d'un capteur de la maison. Chaque élément se désactive, et la page se recentre.
@@ -25,7 +26,7 @@ Les pages se succèdent en diaporama, dans l'ordre choisi dans le back office : 
 
 La nuit, la luminosité suit le soleil de la ville choisie. En option, les couleurs virent au rouge sombre, et l'écran s'éteint entre deux heures, avec ou sans mise en veille profonde de la carte.
 
-*Les images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos.*
+*Les images de l'écran sont des rendus calculés avec les polices et les couleurs de la carte, pas des photos. Les cours et les portefeuilles qu'elles montrent sont inventés.*
 
 ## Le back office
 
