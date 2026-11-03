@@ -1,7 +1,7 @@
 #include "plugin.h"
 #include <Preferences.h>
 
-#define MAX_PAGES  8
+#define MAX_PAGES  16
 #define FADE_STEP  1  // niveaux de clarté gagnés ou perdus par image : un fondu dure 9 images, soit un quart de seconde
 
 static const Plugin *bar;
@@ -14,7 +14,7 @@ static PluginSlide slides[MAX_PAGES];  // modifiés par le back office, depuis u
 static uint8_t order[MAX_STEPS], order_count;  // ordre de passage du diaporama : des rangs de pages
 static uint8_t slide;         // diaporama : le pas en cours dans cet ordre
 static uint32_t turn_at;      // début de ce tour
-static uint8_t was_showable;  // pages qui avaient quelque chose à montrer à l'image précédente, un bit chacune
+static uint16_t was_showable;  // pages qui avaient quelque chose à montrer à l'image précédente, un bit chacune
 static bool fade_on = true;   // fondu entre les pages, réglé dans le back office
 static uint8_t fade_level = LCD_FADE_MAX;  // clarté demandée à l'écran ; remonte d'elle-même après un changement de page
 
@@ -118,7 +118,8 @@ void pluginsLoop() {
     lcdSetFade(fade_level);
   }
 
-  uint8_t now_showable = 0, wanted = count;
+  uint16_t now_showable = 0;
+  uint8_t wanted = count;
   for (uint8_t i = 0; i < count; i++) {
     if (!showable(i)) continue;
     now_showable |= 1 << i;
@@ -128,7 +129,8 @@ void pluginsLoop() {
     turn_at = millis();  // après une page exclusive, le diaporama reprend par un tour complet
   } else {
     // Pages qui viennent d'avoir quelque chose à montrer : la première qui a sa place dans l'ordre passe tout de suite
-    uint8_t fresh = now_showable & ~was_showable, jump = order_count;
+    uint16_t fresh = now_showable & ~was_showable;
+    uint8_t jump = order_count;
     for (uint8_t i = 0; i < order_count && jump == order_count; i++) {
       if (fresh >> order[i] & 1) jump = i;
     }
@@ -137,7 +139,8 @@ void pluginsLoop() {
       slide = jump;
       turn_at = millis();
     } else if (!(now_showable >> page & 1) ||
-               (now_showable != 1 << page && millis() - turn_at >= slides[page].seconds * 1000UL)) {
+               (now_showable != 1 << page && millis() - turn_at >= slides[page].seconds * 1000UL &&
+                !(page == current && pages[page]->busy && pages[page]->busy()))) {
       // Pas suivant dont la page a quelque chose à montrer ; s'il n'y en a aucun, on ne bouge pas
       for (uint8_t i = 1; i <= order_count; i++) {
         uint8_t next = (slide + i) % order_count;

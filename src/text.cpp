@@ -52,3 +52,19 @@ void dropUnsupported(char *s) {
   while (w > s && w[-1] == ' ') w--;
   *w = 0;
 }
+
+// Montant en euros à la française : "76 658 €", "2 418,87 €", "0,1523 €"
+void formatEuros(double amount, char *out, size_t cap) {
+  char digits[24];
+  int decimals = amount >= 10000 ? 0 : amount >= 1 ? 2 : 4;
+  snprintf(digits, sizeof(digits), "%.*f", decimals, amount);
+  char *dot = strchr(digits, '.');
+  size_t whole = dot ? dot - digits : strlen(digits), n = 0;
+  for (size_t i = 0; i < whole && n < cap - 1; i++) {
+    if (i && (whole - i) % 3 == 0) out[n++] = ' ';  // espace des milliers
+    out[n++] = digits[i];
+  }
+  out[n] = 0;
+  if (dot) snprintf(out + n, cap - n, ",%s", dot + 1);
+  strlcat(out, " €", cap);
+}

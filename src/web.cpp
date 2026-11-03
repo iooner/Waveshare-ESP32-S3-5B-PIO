@@ -7,13 +7,15 @@
 #include "agenda.h"
 #include "brightness.h"
 #include "crypto.h"
+#include "stocks.h"
 #include "gfx.h"
 #include "lcd.h"
 #include "plugin.h"
 #include "space.h"
 #include "weather.h"
 
-#define BUF_SIZE           16384  // une requête de navigateur fait moins de 2 Ko, la page ~9 Ko
+#define BUF_SIZE           40960   // une requête : celle des réglages fait ~25 Ko avec 250 titres
+#define PAGE_SIZE          163840  // la page : ~135 Ko avec 250 titres
 #define HTTP_TIMEOUT_MS    1500  // pour recevoir une requête entière
 #define IDLE_TIMEOUT_MS    600   // pour en recevoir le début
 #define UPDATE_TIMEOUT_MS  10000  // silence maximal pendant l'envoi d'un firmware
@@ -38,8 +40,9 @@ static const char HEAD[] =
     "background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em}input:not([type]){flex:1;min-width:0}input[name^=n]:not([type]){flex:0 0 5em}"
     "input[type=number]{width:4.5em;text-align:right}input[type=time],input[type=number]{font:inherit;color:#fff;"
     "background:#2c2c2e;border:0;border-radius:8px;padding:.3em .5em;margin-left:auto;color-scheme:dark}"
-    "button{background:#0a84ff}#r,#cr,#ol,#on{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty{display:none}"
+    "button{background:#0a84ff}#r,#cr,#ol,#on{flex-wrap:wrap;padding:.5em 0}#r:empty,#cr:empty,#sm:empty{display:none}"
     "#r button,#cr button,#on button,label button{background:#2c2c2e}#ol button{background:#30d158;color:#000}"
+    "textarea{font:inherit;color:#fff;background:#2c2c2e;border:0;border-radius:8px;padding:.45em .7em;flex:1;min-width:0;height:2.2em}"
     "input[type=file]{font:inherit;color:#999;min-width:0}b{margin-left:auto;font-weight:400;color:#999;text-align:right}"
     "small{font-size:.6em;font-weight:400;color:#999}p{font-size:.8em;color:#999;margin:.5em 1.2em}"
     "a{color:#0a84ff;text-decoration:none}footer{text-align:center;color:#999;font-size:.8em;line-height:1.9;"
@@ -88,7 +91,27 @@ static const char COINS_NOTE[] =
     "</section><p>Sans quantité, la page crypto affiche le cours et ses variations sur 1 heure, 24 heures et "
     "7 jours. Avec une quantité, elle affiche aussi ce qu'elle vaut, et le total du portefeuille. Les quantités "
     "restent sur la carte. Cours en euros, fournis par CoinGecko, à titre purement informatif : ils peuvent être "
-    "en retard ou inexacts.<h2>Mes agendas</h2><section>";
+    "en retard ou inexacts.<h2>Actions et ETF</h2><section>"
+    "<div><input id=si placeholder='ISIN'><input id=sn placeholder='nom' maxlength=15>"
+    "<button type=button onclick=sa()>Ajouter</button></div>"
+    "<div><input type=file id=ip accept='.pdf,application/pdf'><button type=button onclick=ipdf()>Importer le PDF</button></div>"
+    "<div><textarea id=ix placeholder='ou coller le texte du relevé'></textarea>"
+    "<button type=button onclick=im()>Importer</button></div><div id=sm></div>";
+
+// Un titre choisi. Arguments : rang, nom donné par la bourse ou ISIN, nom choisi, rang, quantité,
+// rang, prix d'achat, rang, ISIN, rang
+static const char STOCK_ROW[] =
+    "<label><input name=kn%u placeholder='%s' value='%s' maxlength=15><input name=kq%u placeholder='quantité' "
+    "inputmode=decimal value='%s'><input name=kp%u placeholder=\"prix d'achat\" inputmode=decimal value='%s'>"
+    "<input type=hidden name=ki%u value='%s'><button type=button onclick=sd(%u)>×</button></label>";
+
+static const char STOCKS_NOTE[] =
+    "</section><p>Un titre se désigne par son ISIN, affiché dans Trade Republic sous le nom de l'action ou de l'ETF "
+    "(par exemple US1912161007 pour Coca-Cola). 250 titres au plus ; au-delà de six, la page les fait défiler par groupes, du plus gros au plus petit. Sans quantité, la page actions affiche le cours et "
+    "sa variation du jour ; avec une quantité, ce qu'il vaut et le total du portefeuille ; avec le prix d'achat "
+    "moyen d'une part, la plus-value. Pour tout mettre à jour d'un coup : dans Trade Republic, télécharger l'État du patrimoine et l'importer ici (ou coller son texte). Le PDF est lu par le navigateur, avec pdf.js ; la carte ne reçoit que les quantités. Quantités et prix restent sur la carte. Cours en euros de la bourse Lang & "
+    "Schwarz, celle de Trade Republic, à titre purement informatif : ils peuvent être en retard ou inexacts."
+    "<h2>Mes agendas</h2><section>";
 
 // Un agenda personnel : son nom, puis son adresse. L'adresse n'est jamais renvoyée au navigateur :
 // son champ reste vide, son texte grisé dit s'il y en a une. Arguments : rang (à partir de 1),
@@ -147,8 +170,8 @@ static const char STATE[] =
     "<h2>État</h2><section><div>Page affichée<b>%s</b></div><div>Heure locale<b>%02d:%02d</b></div><div>Soleil et lune<b>%s</b></div>"
     "<div>Allumé depuis<b>%lu h %02lu min</b></div><div>Dernier démarrage<b>%s</b></div><div>Wi-Fi<b>%d dBm</b></div>"
     "<div>RAM interne libre<b>%u Ko, au plus bas %u Ko</b></div><div>Images ratées<b>%lu</b></div><div>Balayage<b>%lu retards, copie max %lu µs</b></div>"
-    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Particules<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
-    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, agenda %u</b></div></section>";
+    "<div>Luminosité<b>%u %%, rouge %u/%u</b></div><div>Météo<b>%s</b></div><div>Crypto<b>%s</b></div><div>Actions<b>%s</b></div><div>Agendas<b>%s</b></div><div>Dans l'espace<b>%d</b></div><div>Particules<b>%s</b></div><div>Firmware<b>partition %s</b></div>"
+    "<div>Marge des piles<b>web %u, météo %u, Sonos %u, crypto %u, actions %u, agenda %u</b></div></section>";
 
 static const char SCRIPT[] =
     "<script>let F=document.forms[0];"
@@ -162,7 +185,7 @@ static const char SCRIPT[] =
     // deux champs n'ont de sens qu'ensemble.
     "async function save(){ok.textContent='...';try{let a=await fetch('/set?'+new URLSearchParams(new FormData(F)));"
     "ok.textContent=a.ok?'enregistré':'refusé'}catch(e){ok.textContent='carte injoignable'}}"
-    "F.onchange=e=>{let t=e.target;if(t.type=='file')return;if(t.name[0]=='u')save().then(()=>location.reload());else if(t.type!='text'||'qna'.includes(t.name[0]))save()};F.onsubmit=e=>{e.preventDefault();save()};"
+    "F.onchange=e=>{let t=e.target;if(t.type=='file')return;if(t.name[0]=='u')save().then(()=>location.reload());else if(t.type!='text'||'qnak'.includes(t.name[0]))save()};F.onsubmit=e=>{e.preventDefault();save()};"
     "F.oninput=e=>{if(e.target.type=='range')e.target.nextElementSibling.textContent=e.target.value+' %'};"
     // La recherche de ville part du navigateur, pas de la carte ; choisir une ville l'enregistre
     "q.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();s()}};async function s(){r.textContent='...';"
@@ -184,6 +207,46 @@ static const char SCRIPT[] =
     "i.type='hidden';i.name=k+n;i.value=v;F.append(i)};h('c',id);"
     "h('s',sym.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,7));await save();location.reload()}"
     "async function cd(i){F['c'+i].value='';await save();location.reload()}"
+    // Actions : un ISIN saisi s'ajoute à la suite ; en retirer un vide son ISIN, comme pour les cryptos
+    "si.onkeydown=e=>{if(e.key=='Enter'){e.preventDefault();sa()}};async function sa(){"
+    "let v=si.value.toUpperCase().replace(/[^A-Z0-9]/g,''),n=document.querySelectorAll('[name^=ki]').length;"
+    "if(!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(v)){sm.textContent='ISIN invalide : deux lettres, puis dix chiffres ou lettres';return}"
+    "if(n>249){sm.textContent='250 titres au plus';return}let h=(k,x)=>{let i=document.createElement('input');"
+    "i.type='hidden';i.name=k+n;i.value=x;F.append(i)};h('ki',v);h('kn',sn.value);await save();location.reload()}"
+    "async function sd(i){F['ki'+i].value='';await save();location.reload()}"
+    // Import d'un relevé Trade Republic (État du patrimoine), copié depuis le PDF. Le texte copié
+    // d'un PDF ne garde pas les lignes du tableau : la n-ième quantité va avec le n-ième ISIN. Les
+    // cryptos, en fin de relevé, sont laissées de côté. Un relevé complet (il annonce son nombre de
+    // positions) retire aussi les titres vendus.
+    // Nom de chaque titre, pour ceux qui arrivent : le texte juste avant son « ISIN: », sans la
+    // description du titre (Registered Shares...) ni ce qui l'entoure (quantités, prix, dates, pied de
+    // page). Vide quand il n'y en a pas : la carte prend alors le nom donné par la bourse.
+    "function nm(t){let N={},f=0;for(let m of t.matchAll(/ISIN:\\s*([A-Z]{2}[A-Z0-9]{9}\\d)/g)){let s=t.slice(f,m.i"
+    "ndex);f=m.index+m[0].length;s=s.split(/ (?:Registered|Reg\\.|Actions|Inhaber|Aandelen|Namens|Shares|Act\\.)\\b"
+    "/)[0].replace(/Pays d'enregistrement: \\S+|Locatie van bewaring: \\S+|Relevé de transaction en Allemagne|effec"
+    "tenfactuur in Duitsland|NOM DU TITRE|NAAM EFFECT|PRIX PAR PIÈCE|KOERS PER STUK|VALEUR EN EUR|WAARDE IN EUR|Piè"
+    "ces|stuks|Page \\d+ de \\d+|Pagina \\d+ van \\d+|\\([^)]*UTC[^)]*\\)|(Inscrite auprès|Directeurs Généraux|Gere"
+    "gistreerd bij|Bestuurders).*?Pischke|\\S*\\d[.,:\\/-]\\d\\S*|\\b\\d{4,}\\b/g,'|');let n=s.split('|').pop().tri"
+    "m().replace(/(\\s(Inc\\.?|Corp\\.?|Ltd\\.?|S\\.A\\.S?\\.?|SA|SE|AG|N\\.V\\.|NV|Holdings?|Group|Co\\.|Ét\\.Expl"
+    "\\.P\\.G\\.Cl\\.|USD|\\(Acc\\)|\\(Dist\\)))+$/i,'').replace(/-SA$/,'');N[m[1]]=n.length>15?n.slice(0,14).trim("
+    ")+'.':n}return N}"
+    "async function im(){let t=ix.value.normalize().split(/PORTEFEUILLE CRYPTO|CRYPTOWALLET/)[0].replace(/\\s+/g,' '),"
+    "q=[...t.matchAll(/(\\d[\\d.]*,\\d+|\\d+)\\s+(Pièces|stuks)/g)].map(m=>m[1].replace(/\\./g,'').replace(',','.')),"
+    "s=[...t.matchAll(/ISIN:\\s*([A-Z]{2}[A-Z0-9]{9}\\d)/g)].map(m=>m[1]),c=t.match(/(POSITIONS|POSITIES) ?: ?(\\d+)/);"
+    "if(!s.length||q.length!=s.length||c&&+c[2]!=s.length){sm.textContent='Relevé non reconnu : '+q.length+' quantités pour '+s.length+' ISIN';return}"
+    "let P={},N=nm(t),a=0,u=0,d=0;s.forEach((x,i)=>P[x]=q[i]);document.querySelectorAll('[name^=ki]').forEach(x=>{"
+    "if(!x.value)return;let i=x.name.slice(2);if(x.value in P){F['kq'+i].value=P[x.value];delete P[x.value];u++}else if(c){x.value='';d++}});"
+    "let n=document.querySelectorAll('[name^=ki]').length;for(let x in P){if(n>249)break;let h=(k,v)=>{let i=document.createElement('input');"
+    "i.type='hidden';i.name=k+n;i.value=v;F.append(i)};h('ki',x);h('kn',N[x]||'');h('kq',P[x]);n++;a++}"
+    "sessionStorage.m='Relevé importé : '+u+' titres mis à jour, '+a+' ajoutés, '+d+' retirés';await save();location.reload()}"
+    // Le PDF lui-même est lu par le navigateur, avec pdf.js chargé à ce moment-là : la carte ne
+    // reçoit que les quantités
+    "async function ipdf(){let f=ip.files[0];if(!f)return;sm.textContent='Lecture du PDF...';try{"
+    "let L='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/6.4.299/',p=await import(L+'pdf.min.mjs');"
+    "p.GlobalWorkerOptions.workerSrc=L+'pdf.worker.min.mjs';let d=await p.getDocument({data:await f.arrayBuffer()}).promise,t='';"
+    "for(let i=1;i<=d.numPages;i++)t+=(await(await d.getPage(i)).getTextContent()).items.map(x=>x.str).join(' ')+' ';"
+    "ix.value=t;await im()}catch(e){sm.textContent='PDF illisible : '+e.message}}"
+    "try{if(sessionStorage.m){sm.textContent=sessionStorage.m;sessionStorage.removeItem('m')}}catch(e){}"
     // Agendas : une adresse collée est enregistrée puis masquée ; « Retirer » le demande à la carte
     "async function ud(i){let h=document.createElement('input');h.type='hidden';h.name='ur'+i;h.value=1;F.append(h);"
     "await save();location.reload()}"
@@ -201,9 +264,9 @@ static void add(const char *format, ...) __attribute__((format(printf, 1, 2)));
 static void add(const char *format, ...) {
   va_list args;
   va_start(args, format);
-  page_len += vsnprintf(page + page_len, BUF_SIZE - page_len, format, args);
+  page_len += vsnprintf(page + page_len, PAGE_SIZE - page_len, format, args);
   va_end(args);
-  page_len = min<size_t>(page_len, BUF_SIZE - 1);
+  page_len = min<size_t>(page_len, PAGE_SIZE - 1);
 }
 
 static void reply(WiFiClient &c, const char *status, const char *text) {
@@ -252,6 +315,26 @@ static double quantity(const char *value) {
   text[n] = 0;
   double q = atof(text);
   return q > 0 ? q : 0;
+}
+
+// Texte à placer dans un attribut entre apostrophes : « & » devient &amp;, les guillemets et les
+// chevrons des espaces
+static void attribute(const char *text, char *out, size_t cap) {
+  size_t n = 0;
+  for (; *text && n + 5 < cap; text++) {
+    if (*text == '&') memcpy(out + n, "&amp;", 5), n += 5;
+    else out[n++] = strchr("'\"<>", *text) ? ' ' : *text;
+  }
+  out[n] = 0;
+}
+
+// Nombre saisi, réaffiché sans zéros inutiles ; vide s'il est nul
+static void number(double value, char *out, size_t cap) {
+  out[0] = 0;
+  if (value <= 0) return;
+  int n = snprintf(out, cap, "%.8f", value);
+  while (n > 1 && out[n - 1] == '0') out[--n] = 0;
+  if (out[n - 1] == '.') out[--n] = 0;
 }
 
 // Décode la valeur d'un paramètre (« %3A » pour deux-points...), jusqu'au paramètre suivant
@@ -343,6 +426,37 @@ static void apply(const char *query) {
     }
     if (count < CRYPTO_MAX) memset(&coins[count], 0, sizeof(CryptoCoin));  // dernier emplacement essayé, resté vide
     cryptoConfigure(coins, count);
+  }
+
+  // Actions : rangées comme les cryptos. Un ISIN mal formé est ignoré.
+  if (param(query, "ki0")) {
+    static Stock *list = (Stock *)heap_caps_malloc(STOCKS_MAX * sizeof(Stock), MALLOC_CAP_SPIRAM);  // une seule tâche passe ici
+    memset(list, 0, STOCKS_MAX * sizeof(Stock));
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < STOCKS_MAX; i++) {
+      char name[8];
+      Stock &st = list[count];
+      snprintf(name, sizeof(name), "ki%u", i);
+      word(param(query, name), st.isin, sizeof(st.isin));
+      for (char *p = st.isin; *p; p++) *p = toupper(*p);
+      if (strlen(st.isin) != 12 || !isalpha((uint8_t)st.isin[0]) || !isalpha((uint8_t)st.isin[1])) {
+        memset(&st, 0, sizeof(st));
+        continue;
+      }
+      // Nom : sans les caractères qui casseraient la page quand elle le réaffiche ; « & » est
+      // gardé (S&P 500), et écrit &amp; dans la page
+      snprintf(name, sizeof(name), "kn%u", i);
+      decode(param(query, name), st.name, sizeof(st.name));
+      for (char *p = st.name; *p; p++) {
+        if (strchr("'\"<>", *p)) *p = ' ';
+      }
+      snprintf(name, sizeof(name), "kq%u", i);
+      st.quantity = quantity(param(query, name));
+      snprintf(name, sizeof(name), "kp%u", i);
+      st.cost = quantity(param(query, name));
+      count++;
+    }
+    stocksConfigure(list, count);
   }
 
   WeatherSettings s;
@@ -446,16 +560,25 @@ static void sendPage(WiFiClient &c) {
       sky.moon ? " checked" : "", spaceEnabled() ? " checked" : "", air.enabled ? " checked" : "", s.latitude, s.longitude);
 
   for (uint8_t c = 0; c < crypto.count; c++) {
-    // Quantité sans zéros inutiles, vide si aucune
-    char held[24] = "";
-    if (crypto.coins[c].quantity > 0) {
-      int n = snprintf(held, sizeof(held), "%.8f", crypto.coins[c].quantity);
-      while (n > 1 && held[n - 1] == '0') held[--n] = 0;
-      if (held[n - 1] == '.') held[--n] = 0;
-    }
+    char held[24];
+    number(crypto.coins[c].quantity, held, sizeof(held));
     add(COIN_ROW, crypto.coins[c].symbol, c, held, c, crypto.coins[c].id, c, crypto.coins[c].symbol, c);
   }
   add("%s", COINS_NOTE);
+  static Stocks &shares = *(Stocks *)heap_caps_malloc(sizeof(Stocks), MALLOC_CAP_SPIRAM);  // une seule tâche passe ici
+  stocksGet(shares);
+  for (uint8_t i = 0; i < shares.count; i++) {
+    const Stock &st = shares.stocks[i];
+    char held[24], cost[24];
+    number(st.quantity, held, sizeof(held));
+    number(st.cost, cost, sizeof(cost));
+    // Nom donné par la bourse, en texte grisé, et nom choisi : écrits pour un attribut HTML
+    char hint[48], label[48];
+    attribute(shares.title[i][0] ? shares.title[i] : st.isin, hint, sizeof(hint));
+    attribute(st.name, label, sizeof(label));
+    add(STOCK_ROW, i, hint, label, i, held, i, cost, i, st.isin, i);
+  }
+  add("%s", STOCKS_NOTE);
   for (uint8_t u = 0; u < AGENDA_URLS; u++) {
     char name[AGENDA_NAME_SIZE];
     agendaName(u, name, sizeof(name));
@@ -477,6 +600,15 @@ static void sendPage(WiFiClient &c) {
   if (crypto.count == 0) strlcpy(quotes, "aucune choisie", sizeof(quotes));
   else if (quotes_age < 0) strlcpy(quotes, "cours pas encore lus", sizeof(quotes));
   else snprintf(quotes, sizeof(quotes), "cours lus il y a %ld min", (long)(quotes_age / 60));
+  char shares_state[60];
+  int32_t shares_age = stocksAge();
+  if (shares.count == 0) strlcpy(shares_state, "aucune choisie", sizeof(shares_state));
+  else if (shares_age < 0) strlcpy(shares_state, "cours pas encore lus", sizeof(shares_state));
+  else snprintf(shares_state, sizeof(shares_state), "cours lus il y a %ld min", (long)(shares_age / 60));
+  if (stocksUnknown()) {
+    size_t n = strlen(shares_state);
+    snprintf(shares_state + n, sizeof(shares_state) - n, ", %u ISIN inconnu%s", stocksUnknown(), stocksUnknown() > 1 ? "s" : "");
+  }
   char agenda[160];
   int32_t lghs_age = agendaAge(AGENDA_LGHS), mine_age = agendaAge(AGENDA_MINE);
   int n = lghs_age < 0 ? snprintf(agenda, sizeof(agenda), "LGHS pas encore lu")
@@ -522,12 +654,12 @@ static void sendPage(WiFiClient &c) {
       (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
       (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned long)lcdBadFrames(),
       (unsigned long)lcdLateChunks(), (unsigned long)lcdMaxCopyUs(),
-      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, agenda, spacePeople(), dust, esp_ota_get_running_partition()->label, stackMargin("web"),
-      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("agenda"));
+      brightnessCurrent(), gfxNight(), GFX_NIGHT_MAX, weather, quotes, shares_state, agenda, spacePeople(), dust, esp_ota_get_running_partition()->label, stackMargin("web"),
+      stackMargin("meteo"), stackMargin("sonos"), stackMargin("crypto"), stackMargin("actions"), stackMargin("agenda"));
   add("%s", FOOTER);
   add("%s", SCRIPT);
   // Une page coupée perdrait son script, et plus aucun réglage ne s'enregistrerait
-  if (page_len >= BUF_SIZE - 1) Serial.println("Back office : page trop longue pour son tampon");
+  if (page_len >= PAGE_SIZE - 1) Serial.println("Back office : page trop longue pour son tampon");
 
   // Jamais gardée en cache par le navigateur : elle doit montrer les réglages du moment
   c.printf("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
@@ -645,7 +777,7 @@ static void webTask(void *) {
 
 void webBegin() {
   req = (char *)heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM);
-  page = (char *)heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM);
+  page = (char *)heap_caps_malloc(PAGE_SIZE, MALLOC_CAP_SPIRAM);
   if (req && page) xTaskCreatePinnedToCore(webTask, "web", 4608, nullptr, 1, nullptr, 0);
 }
 

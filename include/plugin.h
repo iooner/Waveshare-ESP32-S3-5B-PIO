@@ -37,6 +37,7 @@ struct Plugin {
   bool exclusive;    // garde l'écran quand elle a quelque chose à montrer, au lieu de prendre son tour dans le
                      // diaporama. Pour une page non optionnelle, ce n'est que le réglage de départ.
   const char *label; // nom affiché dans le back office. Nul : `name`, avec une majuscule.
+  bool (*busy)();    // la page n'a pas fini de montrer ce qu'elle a : son tour se prolonge. Peut être nul.
 };
 
 // Initialise tous les plugins. La dernière page de la liste, l'accueil, doit être toujours active.
@@ -76,6 +77,8 @@ void pluginSetSlide(uint8_t index, const PluginSlide &s);
 extern const Plugin clock_bar_plugin;  // barre : date à gauche, heure à droite
 extern const Plugin sonos_plugin;      // page : morceau en cours sur les enceintes Sonos, quand elles jouent
 extern const Plugin crypto_plugin;     // page : cours des cryptomonnaies choisies et valeur du portefeuille
+extern const Plugin stocks_plugin;     // page : cours des actions et ETF choisis et valeur du portefeuille
+extern const Plugin fortune_plugin;    // page : valeur des actions et des cryptos détenues, et leur total
 extern const Plugin agenda_plugin;     // page : prochains événements du Liège Hackerspace
 extern const Plugin my_agenda_plugin;  // page : prochains événements des agendas personnels
 extern const Plugin air_plugin;        // page : particules fines mesurées par le capteur de la maison

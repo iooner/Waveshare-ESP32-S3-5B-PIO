@@ -15,6 +15,8 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 - **Accueil** : heure et date, météo des six heures à venir avec annonce de pluie, lever et coucher du soleil, phase de la lune, nombre de personnes dans l'espace, particules fines d'un capteur de la maison. Chaque élément se désactive, et la page se recentre.
 - **Sonos** : le morceau en cours quand une enceinte du réseau joue. La carte interroge les enceintes directement, sans compte ni cloud. La pochette est celle que l'enceinte annonce pour le morceau : la carte la télécharge sur le serveur d'images de Spotify, en 300 × 300. Un morceau venu d'une autre source (radio, bibliothèque locale) s'affiche sans pochette.
 - **Cryptomonnaies** : le cours en euros de six cryptos au plus, leurs variations sur 1 heure, 24 heures et 7 jours, et la valeur du portefeuille si des quantités sont saisies. Ces cours sont donnés à titre purement informatif : ils peuvent être en retard ou inexacts, et ne constituent ni un conseil ni une base pour une décision d'achat ou de vente.
+- **Actions et ETF** : 250 titres au plus, désignés par leur ISIN, au cours en euros de la bourse [Lang & Schwarz](https://www.ls-tc.de), celle où passent les ordres de Trade Republic. Les quantités se mettent à jour d'un coup en important dans le back office l'État du patrimoine de Trade Republic (le PDF, lu par le navigateur). Pour chacun : le cours, la variation du jour, et, si une quantité est saisie, sa valeur, et sa plus-value si le prix d'achat l'est aussi. Au-delà de six titres, la page les fait défiler par groupes, du plus gros au plus petit, avec le total du portefeuille. Même avertissement que pour les cryptos : à titre purement informatif.
+- **Fortune** : ce que valent les actions et les cryptos détenues, chacune avec sa variation, et leur total.
 - **Agendas personnels** : les dix prochains événements de trois calendriers au plus, donnés par leur adresse iCal (Google Agenda, par exemple).
 - **Agenda du hackerspace** : les cinq prochains événements du [Liège Hackerspace](https://lghs.be).
 - **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau sur les dix de l'[indice belge de qualité de l'air](https://wallonair.be/fr/en-savoir-plus/indice-de-la-qualite-de-l-air) (BelAQI, seuils horaires). En option, la barre du haut des autres pages donne le niveau en un mot, dans sa couleur : la moyenne des deux.
@@ -27,7 +29,7 @@ La nuit, la luminosité suit le soleil de la ville choisie. En option, les coule
 
 ## Le back office
 
-La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet de la redémarrer ou de lui envoyer un nouveau firmware.
+La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, actions, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet de la redémarrer ou de lui envoyer un nouveau firmware.
 
 Deux précautions :
 
@@ -64,6 +66,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | Heure | `pool.ntp.org` (NTP) | à chaque connexion au Wi-Fi, puis toutes les 3 heures | géré par le SDK | toujours |
 | Météo et fuseau horaire | `api.open-meteo.com` (HTTP) | 15 minutes | 1 minute | toujours : elle donne le fuseau |
 | Cours des cryptomonnaies | `api.coingecko.com` (HTTPS) | 2 minutes | 1 minute | si une crypto est choisie |
+| Cours des actions et ETF | `www.ls-tc.de` (HTTPS), une lecture par titre | 5 minutes en semaine de 5 h à 22 h 30 UTC, autour des heures de bourse ; 1 heure sinon | 1 minute | si un titre est choisi |
 | Agenda du hackerspace | `lghs.be` (HTTPS) | 1 heure | 10 minutes | toujours |
 | Agendas personnels | les adresses données (HTTPS) | 1 heure, chacun | 10 minutes | pour chaque adresse |
 | Personnes dans l'espace | `corquaid.github.io` (HTTPS) | 6 heures | 10 minutes | si la case est cochée |
@@ -73,10 +76,10 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | Pochette du morceau | `i.scdn.co` (HTTP) | à chaque changement de pochette | pas de pochette | en lecture |
 
 - Après un démarrage, les lectures en HTTPS attendent 30 à 40 secondes, puis passent une à la fois.
-- Une donnée trop ancienne n'est plus affichée : la météo après 90 minutes, les cours après 20 minutes, un agenda après 48 heures.
+- Une donnée trop ancienne n'est plus affichée : la météo après 90 minutes, les cours des cryptos après 20 minutes, ceux des actions après 3 heures, un agenda après 48 heures.
 - Les agendas et les cours sont lus même si leur page est désactivée.
 - Les recherches de ville et de cryptomonnaie du back office partent du navigateur, pas de la carte.
-- Les cours demandés ne contiennent pas les quantités : elles ne quittent pas la carte.
+- Les cours demandés ne contiennent pas les quantités : elles ne quittent pas la carte, pas plus que les prix d'achat.
 
 </details>
 
@@ -90,7 +93,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | `src/plugin.cpp`, `src/plugins/` | Pages et diaporama |
 | `src/weather.cpp`, `src/astro.cpp`, `src/space.cpp`, `src/air.cpp` | Météo et fuseau horaire, soleil et lune, personnes dans l'espace, capteur de particules |
 | `src/sonos.cpp` | Enceintes Sonos du réseau local |
-| `src/crypto.cpp` | Cours des cryptomonnaies |
+| `src/crypto.cpp`, `src/stocks.cpp` | Cours des cryptomonnaies, des actions et des ETF |
 | `src/agenda.cpp`, `src/ical.cpp` | Agendas : lecture des calendriers au fil de l'eau, récurrences comprises |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
 | `src/web.cpp` | Back office et mise à jour par Wi-Fi |
@@ -126,6 +129,7 @@ Le pilote d'écran, le dessin, le rendu du texte et les pictogrammes météo son
 | --- | --- | --- | --- |
 | [PlatformIO](https://platformio.org) | PlatformIO Labs | Apache-2.0 | Compilation et téléversement |
 | [pioarduino platform-espressif32](https://github.com/pioarduino/platform-espressif32) 55.03.312 | Communauté pioarduino | Apache-2.0 | Plateforme PlatformIO fournissant l'Arduino core 3.x |
+| [pdf.js](https://mozilla.github.io/pdf.js/) 6.4.299, servi par cdnjs | Mozilla | Apache-2.0 | Lecture du relevé Trade Republic en PDF, par le navigateur, depuis le back office (pas embarqué dans le firmware) |
 | [Pillow](https://python-pillow.github.io) | Jeffrey A. Clark et contributeurs | MIT-CMU | Rendu des polices, des pictogrammes et du logo par les scripts de `tools/` (pas embarqué dans le firmware) |
 
 </details>
@@ -138,6 +142,7 @@ Le pilote d'écran, le dessin, le rendu du texte et les pictogrammes météo son
 | [NTP Pool Project](https://www.ntppool.org) | Heure réseau |
 | [Open-Meteo](https://open-meteo.com), données sous licence CC BY 4.0, usage non commercial sans clé | Météo et fuseau horaire ; recherche de ville, appelée par le navigateur depuis le back office |
 | [CoinGecko](https://www.coingecko.com), accès public sans clé | Cours des cryptomonnaies ; recherche d'une crypto, appelée par le navigateur |
+| [Lang & Schwarz TradeCenter](https://www.ls-tc.de), données du site public, sans compte ni clé | Cours des actions et ETF, recherche d'un titre par son ISIN |
 | [International Space Station APIs](https://github.com/corquaid/international-space-station-APIs), liste tenue à jour par son auteur | Nombre de personnes dans l'espace |
 | Calendrier public du [Liège Hackerspace](https://lghs.be) | Événements de la page agenda |
 | Enceintes Sonos du réseau local (UPnP) | Morceau en cours |

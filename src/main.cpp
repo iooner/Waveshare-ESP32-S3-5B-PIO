@@ -5,11 +5,12 @@
 #include "lcd.h"
 #include "net.h"
 #include "plugin.h"
+#include "stocks.h"
 #include "web.h"
 
 // Pages, dans l'ordre du diaporama ; l'accueil en dernier. Elles se règlent dans le back office
 // (web.h) ; la mire de test est désactivée au départ.
-static const Plugin *const pages[] = {&demo_plugin,   &sonos_plugin,     &crypto_plugin,
+static const Plugin *const pages[] = {&demo_plugin,   &sonos_plugin,     &crypto_plugin, &stocks_plugin, &fortune_plugin,
                                        &agenda_plugin, &my_agenda_plugin, &air_plugin,   &clock_plugin};
 
 void setup() {
@@ -26,6 +27,9 @@ void setup() {
   exioWrite(EXIO_SD_CS, HIGH);
   exioWrite(EXIO_LCD_BL, LOW);
   if (!lcdBegin()) Serial.println("Echec init LCD");
+  // Toute allocation de plus de 64 octets va en PSRAM quand elle le peut, au lieu de 4 Ko par
+  // défaut : la RAM interne est gardée pour l'écran (lcd.cpp), qui la demande explicitement
+  heap_caps_malloc_extmem_enable(64);
 
   netBegin();
   astroBegin();
@@ -65,6 +69,7 @@ void loop() {
   reportLcdHealth();
   brightnessLoop();
   netLoop();
+  stocksLoop();
   // Affiche l'image et attend le rafraîchissement suivant de la dalle
   lcdPresent();
 }
