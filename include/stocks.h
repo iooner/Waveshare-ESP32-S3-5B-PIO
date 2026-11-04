@@ -38,6 +38,11 @@ int32_t stocksAge();
 // Durée du dernier tour de lecture des cours, en secondes
 uint16_t stocksRoundSeconds();
 
+// 1 si la bourse principale du titre est en séance, 0 si elle est fermée, -1 si on ne sait pas :
+// pays de l'ISIN sans bourse connue, ou heure pas encore reçue. D'après les heures de séance de
+// chaque bourse et le jour de la semaine : un jour férié passe pour ouvert.
+int8_t stocksMarketOpen(const char *isin);
+
 // Nombre de titres choisis dont la bourse ne connaît pas l'ISIN
 uint8_t stocksUnknown();
 

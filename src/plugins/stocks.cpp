@@ -1,6 +1,6 @@
 // Page actions : une ligne par titre choisi dans le back office (cours, variation du jour, et sa
 // valeur si une quantité est saisie, sa plus-value si le prix d'achat l'est aussi), puis le total
-// du portefeuille (stocks.h)
+// du portefeuille (stocks.h). Un point devant chaque nom dit si sa bourse est en séance.
 #include "fonts/font_sans24.h"
 #include "fonts/font_sans32.h"
 #include "fonts/font_sans40.h"
@@ -13,6 +13,9 @@
 #define TOTAL_H     86   // filet, puis le total
 #define PRICE_W     180  // le cours, à gauche de son bord droit : "1 234,56 €" fait 163 pixels
 #define GAP         8    // entre deux colonnes
+#define DOT_R       8    // point de séance devant le nom : vert si la bourse du titre est ouverte
+#define DOT_Y       24   // centre du point sous le haut de la ligne : à mi-hauteur des majuscules
+#define NAME_X      (MARGIN_X + 2 * DOT_R + 10)
 
 static uint32_t shown;  // version des cours affichés, 0 = rien
 
@@ -85,7 +88,10 @@ static void draw() {
     uint8_t i = order[n];
     const Stock &st = s.stocks[i];
     const char *name = st.name[0] ? st.name : s.title[i][0] ? s.title[i] : st.isin;
-    gfxTextBox(MARGIN_X, row_y, name_w, name, font_sans32, COLOR_TEXT, COLOR_BG);
+    // Fermée : un gris qui est un des niveaux d'antialiasing du blanc du nom, sans couleur de plus
+    int8_t open = stocksMarketOpen(st.isin);
+    if (open >= 0) gfxDisc(MARGIN_X + DOT_R, row_y + DOT_Y, DOT_R, open ? COLOR_UP : COLOR_TEXT, COLOR_BG, open ? 15 : 9);
+    gfxTextBox(NAME_X, row_y, name_w - (NAME_X - MARGIN_X), name, font_sans32, COLOR_TEXT, COLOR_BG);
     double price = s.price[i], previous = s.previous[i];
     if (price <= 0) continue;  // titre inconnu de la bourse
     formatEuros(price, text, sizeof(text));

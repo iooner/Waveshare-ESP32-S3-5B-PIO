@@ -296,6 +296,74 @@ static bool marketOpen() {
   return t.tm_wday >= 1 && t.tm_wday <= 5 && minute >= 5 * 60 && minute <= 22 * 60 + 30;
 }
 
+// Bourses principales, désignées par le pays de l'ISIN, et leurs heures de séance, en heure locale.
+// Un ETF irlandais ou luxembourgeois se traite surtout à Francfort, Paris ou Amsterdam : il suit
+// l'Europe. Les jours fériés ne sont pas connus.
+enum Summer : uint8_t { SUMMER_NONE, SUMMER_EU, SUMMER_US };
+struct Market {
+  const char *countries;
+  int16_t utc;          // décalage de l'heure d'hiver, en minutes
+  Summer dst;           // heure d'été
+  uint16_t open, close;  // en minutes depuis minuit
+};
+static const Market MARKETS[] = {
+    {"US CA", -300, SUMMER_US, 9 * 60 + 30, 16 * 60},                                       // New York, Toronto
+    {"GB", 0, SUMMER_EU, 8 * 60, 16 * 60 + 30},                                             // Londres
+    {"FR BE NL PT DE AT CH IT ES IE LU DK SE NO FI", 60, SUMMER_EU, 9 * 60, 17 * 60 + 30},  // Euronext, Xetra...
+    {"JP KR", 540, SUMMER_NONE, 9 * 60, 15 * 60 + 30},                                      // Tokyo, Séoul
+    {"HK", 480, SUMMER_NONE, 9 * 60 + 30, 16 * 60},
+    {"CN", 480, SUMMER_NONE, 9 * 60 + 30, 15 * 60},
+    {"TW", 480, SUMMER_NONE, 9 * 60, 13 * 60 + 30},
+    {"IN", 330, SUMMER_NONE, 9 * 60 + 15, 15 * 60 + 30},
+};
+
+// Jours depuis le 1er janvier 1970 (d'après H. Hinnant, « chrono-compatible date algorithms »)
+static int32_t daysFromCivil(int32_t y, uint32_t m, uint32_t d) {
+  y -= m <= 2;
+  int32_t era = (y >= 0 ? y : y - 399) / 400;
+  uint32_t yoe = y - era * 400, doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  return era * 146097 + (int32_t)(yoe * 365 + yoe / 4 - yoe / 100 + doy) - 719468;
+}
+
+// Jour de la semaine, 0 = dimanche : le 1er janvier 1970 était un jeudi
+static uint8_t weekday(int32_t y, uint32_t m, uint32_t d) {
+  return (daysFromCivil(y, m, d) % 7 + 11) % 7;
+}
+
+// Jour du mois du n-ième dimanche, ou du dernier d'un mois de 31 jours
+static uint8_t nthSunday(int32_t y, uint8_t m, uint8_t n) {
+  return 1 + (7 - weekday(y, m, 1)) % 7 + 7 * (n - 1);
+}
+static uint8_t lastSunday(int32_t y, uint8_t m) {
+  return 31 - weekday(y, m, 31);
+}
+
+int8_t stocksMarketOpen(const char *isin) {
+  time_t now = time(nullptr);
+  if (now < 1700000000 || strlen(isin) < 2) return -1;  // heure pas encore reçue
+  char country[3] = {isin[0], isin[1], 0};
+  for (const Market &m : MARKETS) {
+    if (!strstr(m.countries, country)) continue;
+    struct tm t;
+    gmtime_r(&now, &t);
+    int32_t year = t.tm_year + 1900;
+    int64_t summer_from, summer_to;  // en secondes UTC
+    if (m.dst == SUMMER_EU) {           // du dernier dimanche de mars au dernier d'octobre, à 1 h UTC
+      summer_from = daysFromCivil(year, 3, lastSunday(year, 3)) * 86400LL + 3600;
+      summer_to = daysFromCivil(year, 10, lastSunday(year, 10)) * 86400LL + 3600;
+    } else {  // du 2e dimanche de mars au 1er de novembre, à 2 h, heure locale
+      summer_from = daysFromCivil(year, 3, nthSunday(year, 3, 2)) * 86400LL + 2 * 3600 - m.utc * 60;
+      summer_to = daysFromCivil(year, 11, nthSunday(year, 11, 1)) * 86400LL + 2 * 3600 - (m.utc + 60) * 60;
+    }
+    bool summer = m.dst != SUMMER_NONE && now >= summer_from && now < summer_to;
+    time_t local = now + (m.utc + (summer ? 60 : 0)) * 60;
+    gmtime_r(&local, &t);
+    uint16_t minute = t.tm_hour * 60 + t.tm_min;
+    return t.tm_wday >= 1 && t.tm_wday <= 5 && minute >= m.open && minute < m.close;
+  }
+  return -1;
+}
+
 static void stocksTask(void *) {
   delay(FIRST_READ_MS);
   for (;;) {

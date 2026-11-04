@@ -71,6 +71,30 @@ void gfxFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
   lcdDirty(x, y, w, h);
 }
 
+void gfxDisc(int16_t cx, int16_t cy, int16_t r, uint16_t color, uint16_t bg, uint8_t alpha) {
+  color = tinted(color), bg = tinted(bg);
+  // Bord adouci : part du pixel couverte par le disque, comptée sur 4 x 4 points
+  int32_t r2 = (int32_t)r * r * 64;  // en huitièmes de pixel
+  for (int16_t y = -r; y < r; y++) {
+    for (int16_t x = -r; x < r; x++) {
+      int16_t px = cx + x, py = cy + y;
+      if (px < 0 || py < 0 || px >= LCD_WIDTH || py >= LCD_HEIGHT) continue;
+      uint8_t n = 0;
+      for (int32_t sy = 0; sy < 4; sy++) {
+        int32_t dy = y * 8 + sy * 2 + 1;  // centre du point, en huitièmes de pixel
+        for (int32_t sx = 0; sx < 4; sx++) {
+          int32_t dx = x * 8 + sx * 2 + 1;
+          n += dx * dx + dy * dy <= r2;
+        }
+      }
+      uint8_t a = (n * 15 + 8) / 16 * alpha / 15;
+      if (coarse) a = (a + 1) / 3 * 3;
+      lcd_fb[py * LCD_WIDTH + px] = blend565(color, bg, a);
+    }
+  }
+  lcdDirty(cx - r, cy - r, 2 * r, 2 * r);
+}
+
 void gfxRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
   gfxFillRect(x, y, w, 1, color);
   gfxFillRect(x, y + h - 1, w, 1, color);

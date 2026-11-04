@@ -46,6 +46,11 @@ void gfxFillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 void gfxRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
 void gfxLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint16_t color);
 
+// Disque plein de rayon r, centré en (cx, cy), au bord adouci sur le fond bg. alpha (de 0 à 15)
+// l'éclaircit : 9, c'est un blanc qui devient le gris d'un niveau d'antialiasing du texte, sans
+// couleur de plus sur la ligne.
+void gfxDisc(int16_t cx, int16_t cy, int16_t r, uint16_t color, uint16_t bg, uint8_t alpha = 15);
+
 // Copie une image RGB565 de w x h pixels
 void gfxBlit(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t *pixels);
 
