@@ -16,9 +16,9 @@
 #define MAX_AGE_MS       (36UL * 60 * 60 * 1000)
 #define RESP_SIZE        (384 * 1024)          // la plus grosse réponse est l'image : 5 à 60 Ko en JPEG, jusqu'à 300 Ko en PNG
 // Le texte de la rubrique du jour, mis à jour chaque jour par un robot de Wikipédia
-// Une image transparente (logo, carte, schéma tirés d'un SVG) est faite pour le blanc des pages de
-// Wikipédia : sur le noir de l'écran, elle est posée sur une carte claire, comme dans le thème sombre
-// de Wikipédia
+// Une image transparente (logo, carte, schéma tirés d'un SVG) reste sur le noir de l'écran si elle
+// s'y voit ; sinon, un logo gris foncé par exemple, elle est posée sur une carte blanche
+#define SCREEN_COLOR     0x0000
 #define CARD_COLOR       0xFFFF
 #define CARD_PAD         12
 #define RUBRIC_PATH      "/w/index.php?title=Wikip%C3%A9dia:Accueil_principal/Lumi%C3%A8re_sur_(copie_sans_mod%C3%A8les)&action=raw"
@@ -108,11 +108,14 @@ static bool isFile(const char *link) {
 // Décode l'image en JPEG ou en PNG, dans le carré de WIKI_IMAGE_MAX de côté
 static bool decode(const uint8_t *data, size_t len, uint16_t *out, uint16_t &w, uint16_t &h) {
   if (len > 2 && data[0] == 0xFF && data[1] == 0xD8) return jpegDecode(data, len, out, WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, w, h);
-  if (!pngHasAlpha(data, len)) return pngDecode(data, len, out, WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, w, h, CARD_COLOR);
-  // Transparente : décodée sur le fond de la carte, puis entourée de sa marge. Les lignes sont
-  // décalées en partant de la fin, pour ne rien écraser qui reste à déplacer.
+  bool card;
+  if (!pngHasAlpha(data, len)) return pngDecode(data, len, out, WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, w, h, SCREEN_COLOR, CARD_COLOR, card);
+  // Transparente : décodée à la taille de l'intérieur de la carte, entourée de sa marge s'il en
+  // faut une. Les lignes sont décalées en partant de la fin, pour ne rien écraser qui reste à déplacer.
   uint16_t iw, ih, inner = WIKI_IMAGE_MAX - 2 * CARD_PAD;
-  if (!pngDecode(data, len, out, inner, inner, iw, ih, CARD_COLOR)) return false;
+  if (!pngDecode(data, len, out, inner, inner, iw, ih, SCREEN_COLOR, CARD_COLOR, card)) return false;
+  w = iw, h = ih;
+  if (!card) return true;
   w = iw + 2 * CARD_PAD, h = ih + 2 * CARD_PAD;
   for (int32_t y = ih - 1; y >= 0; y--) memmove(out + (y + CARD_PAD) * w + CARD_PAD, out + y * iw, iw * sizeof(uint16_t));
   for (uint16_t y = 0; y < h; y++) {

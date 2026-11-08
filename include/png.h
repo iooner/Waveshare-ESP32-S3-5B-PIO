@@ -7,7 +7,8 @@
 bool pngHasAlpha(const uint8_t *data, size_t len);
 
 // Décode `data` en RGB565 dans `out`, comme jpegDecode() (jpeg.h) : réduite pour tenir dans
-// max_w x max_h, jamais agrandie, h lignes de w pixels. Les pixels transparents sont posés sur `bg`.
-// Faux si l'image est illisible ou trop grande.
+// max_w x max_h, jamais agrandie, h lignes de w pixels. Les pixels transparents sont posés sur
+// `dark` ou sur `light`, le fond sur lequel l'image se voit le mieux ; `on_light` dit lequel (faux
+// pour une image sans transparence). Faux si l'image est illisible ou trop grande.
 bool pngDecode(const uint8_t *data, size_t len, uint16_t *out, uint16_t max_w, uint16_t max_h, uint16_t &w, uint16_t &h,
-               uint16_t bg);
+               uint16_t dark, uint16_t light, bool &on_light);

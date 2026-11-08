@@ -55,7 +55,7 @@ static void unfilter(uint8_t type, uint8_t *row, const uint8_t *prev, size_t n, 
 }
 
 bool pngDecode(const uint8_t *data, size_t len, uint16_t *out, uint16_t max_w, uint16_t max_h, uint16_t &w, uint16_t &h,
-               uint16_t bg) {
+               uint16_t dark, uint16_t light, bool &on_light) {
   static SemaphoreHandle_t lock = xSemaphoreCreateMutex();
   // Le décompresseur fait 11 Ko : en PSRAM, pas sur la pile
   static tinfl_decompressor *inflator = (tinfl_decompressor *)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM);
@@ -121,7 +121,6 @@ bool pngDecode(const uint8_t *data, size_t len, uint16_t *out, uint16_t max_w, u
     float f = min(1.0f, min((float)max_w / width, (float)max_h / height));
     w = max(1, (int)lroundf(width * f));
     h = max(1, (int)lroundf(height * f));
-    uint32_t bg_r = bg >> 11 << 3, bg_g = (bg >> 5 & 0x3F) << 2, bg_b = (bg & 0x1F) << 3;
     // Valeur du canal k du pixel x d'une ligne, ramenée sur 8 bits
     auto sample = [&](const uint8_t *row, uint32_t x, uint8_t k) -> uint32_t {
       if (depth == 16) return row[(x * channels + k) * 2];
@@ -129,12 +128,48 @@ bool pngDecode(const uint8_t *data, size_t len, uint16_t *out, uint16_t max_w, u
       uint32_t bit = x * depth, v = row[bit / 8] >> (8 - depth - bit % 8) & ((1 << depth) - 1);
       return type == 3 ? v : v * 255 / ((1 << depth) - 1);
     };
+    // Valeur brute, pour la comparer à la couleur transparente
     auto raw16 = [&](const uint8_t *row, uint32_t x, uint8_t k) -> int32_t {
       if (depth == 16) return row[(x * channels + k) * 2] << 8 | row[(x * channels + k) * 2 + 1];
       if (depth == 8) return row[x * channels + k];
       uint32_t bit = x * depth;
       return row[bit / 8] >> (8 - depth - bit % 8) & ((1 << depth) - 1);
     };
+    auto pixel = [&](const uint8_t *row, uint32_t x, uint32_t &r, uint32_t &g, uint32_t &b, uint32_t &a) {
+      a = 255;
+      if (type == 3) {
+        const uint8_t *p = palette[sample(row, x, 0)];
+        r = p[0], g = p[1], b = p[2], a = p[3];
+      } else if (type == 0 || type == 4) {
+        r = g = b = sample(row, x, 0);
+        if (type == 4) a = sample(row, x, 1);
+        else if (raw16(row, x, 0) == key[0]) a = 0;
+      } else {
+        r = sample(row, x, 0), g = sample(row, x, 1), b = sample(row, x, 2);
+        if (type == 6) a = sample(row, x, 3);
+        else if (raw16(row, x, 0) == key[0] && raw16(row, x, 1) == key[1] && raw16(row, x, 2) == key[2]) a = 0;
+      }
+    };
+
+    // Fond des pixels transparents : celui sur lequel l'image perd le moins de ses pixels, ceux trop
+    // sombres pour le noir ou trop clairs pour le blanc. Un logo blanc reste sur le noir, un logo
+    // gris foncé passe sur le blanc.
+    uint64_t lost_on_dark = 0, lost_on_light = 0;
+    bool transparent = false;
+    for (uint32_t y = 0; y < height; y++) {
+      const uint8_t *row = raw + y * (stride + 1) + 1;
+      for (uint32_t x = 0; x < width; x++) {
+        uint32_t r, g, b, a;
+        pixel(row, x, r, g, b, a);
+        transparent |= a < 255;
+        uint32_t luma = (r * 77 + g * 150 + b * 29) >> 8;
+        if (luma < 80) lost_on_dark += a;
+        if (luma > 175) lost_on_light += a;
+      }
+    }
+    on_light = transparent && lost_on_dark > lost_on_light;
+    uint16_t bg = on_light ? light : dark;
+    uint32_t bg_r = bg >> 11 << 3, bg_g = (bg >> 5 & 0x3F) << 2, bg_b = (bg & 0x1F) << 3;
     // Chaque pixel voulu est la moyenne des pixels de l'image qu'il couvre, posés sur le fond
     for (uint32_t ty = 0; ty < h; ty++) {
       uint32_t y0 = ty * height / h, y1 = max(y0 + 1, (ty + 1) * height / h);
@@ -144,19 +179,8 @@ bool pngDecode(const uint8_t *data, size_t len, uint16_t *out, uint16_t max_w, u
         for (uint32_t y = y0; y < y1; y++) {
           const uint8_t *row = raw + y * (stride + 1) + 1;
           for (uint32_t x = x0; x < x1; x++, n++) {
-            uint32_t pr, pg, pb, a = 255;
-            if (type == 3) {
-              const uint8_t *p = palette[sample(row, x, 0)];
-              pr = p[0], pg = p[1], pb = p[2], a = p[3];
-            } else if (type == 0 || type == 4) {
-              pr = pg = pb = sample(row, x, 0);
-              if (type == 4) a = sample(row, x, 1);
-              else if (raw16(row, x, 0) == key[0]) a = 0;
-            } else {
-              pr = sample(row, x, 0), pg = sample(row, x, 1), pb = sample(row, x, 2);
-              if (type == 6) a = sample(row, x, 3);
-              else if (raw16(row, x, 0) == key[0] && raw16(row, x, 1) == key[1] && raw16(row, x, 2) == key[2]) a = 0;
-            }
+            uint32_t pr, pg, pb, a;
+            pixel(row, x, pr, pg, pb, a);
             r += (pr * a + bg_r * (255 - a)) / 255;
             g += (pg * a + bg_g * (255 - a)) / 255;
             b += (pb * a + bg_b * (255 - a)) / 255;
