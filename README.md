@@ -20,7 +20,7 @@ Une horloge de salon sur un écran de 5 pouces (1024 × 600), qui fait défiler 
 - **Actions et ETF** : 250 titres au plus, désignés par leur ISIN, au cours en euros de la bourse [Lang & Schwarz](https://www.ls-tc.de), celle où passent les ordres de Trade Republic. Les quantités se mettent à jour d'un coup en important dans le back office l'État du patrimoine de Trade Republic (le PDF, lu par le navigateur). Pour chacun : le cours, la variation du jour, et, si une quantité est saisie, sa valeur, et sa plus-value si le prix d'achat l'est aussi. Un point devant le nom dit si sa bourse principale est en séance : vert si elle l'est, gris sinon (d'après le pays de l'ISIN et les heures de séance de New York, Londres, des bourses du continent européen et de quelques bourses d'Asie ; les jours fériés ne sont pas connus). Au-delà de six titres, la page les fait défiler par groupes, du plus gros au plus petit, avec le total du portefeuille. Même avertissement que pour les cryptos : à titre purement informatif.
 - **Fortune** : ce que valent les actions et les cryptos détenues, chacune avec sa variation, et leur total.
 - **Agendas personnels** : les dix prochains événements de trois calendriers au plus, donnés par leur adresse iCal (Google Agenda, par exemple).
-- **Wikipédia** : l'article mis en avant chaque jour par Wikipédia en français (rubrique « Lumière sur » de sa page d'accueil), mis en page comme la page Sonos : l'image choisie par la rubrique, le titre et le début de l'article.
+- **Wikipédia** : l'article mis en avant chaque jour par Wikipédia en français (rubrique « Lumière sur » de sa page d'accueil), mis en page comme la page Sonos : l'image choisie par la rubrique, le titre et le début de l'article. Une image transparente (un logo ou un schéma tiré d'un SVG, faits pour le blanc des pages de Wikipédia) est posée sur une carte blanche, comme dans le thème sombre de Wikipédia.
 - **Agenda du hackerspace** : les cinq prochains événements du [Liège Hackerspace](https://lghs.be).
 - **Air** : les particules fines (PM2,5 et PM10) mesurées par un capteur [Sensor.Community](https://sensor.community) du réseau local, avec leur niveau sur les dix de l'[indice belge de qualité de l'air](https://wallonair.be/fr/en-savoir-plus/indice-de-la-qualite-de-l-air) (BelAQI, seuils horaires). En option, la barre du haut des autres pages donne le niveau en un mot, dans sa couleur : la moyenne des deux.
 
@@ -32,7 +32,7 @@ La nuit, la luminosité suit le soleil de la ville choisie. En option, les coule
 
 ## Le back office
 
-La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, actions, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet de la redémarrer ou de lui envoyer un nouveau firmware.
+La carte sert une page de réglages sur son adresse (`http://<adresse>/`, affichée sur le port série au démarrage). Tout s'y règle : pages et durées, contenu de l'accueil, cryptos, actions, agendas, luminosité, lieu de la météo. Chaque réglage est enregistré dès qu'il change. La page donne aussi l'état de la carte et permet de la redémarrer ou de lui envoyer un nouveau firmware. Une capture de l'écran tel qu'il est affiché s'obtient à `http://<adresse>/ecran.bmp`.
 
 Deux précautions :
 
@@ -98,7 +98,7 @@ curl -H Expect: --data-binary @.pio/build/waveshare-5b/firmware.bin http://<adre
 | `src/weather.cpp`, `src/astro.cpp`, `src/space.cpp`, `src/air.cpp` | Météo et fuseau horaire, soleil et lune, personnes dans l'espace, capteur de particules |
 | `src/sonos.cpp` | Enceintes Sonos du réseau local |
 | `src/crypto.cpp`, `src/stocks.cpp` | Cours des cryptomonnaies, des actions et des ETF |
-| `src/wiki.cpp`, `src/jpeg.cpp` | Article du jour de Wikipédia ; décodage des images JPEG (pochette Sonos, image de l'article) |
+| `src/wiki.cpp`, `src/jpeg.cpp`, `src/png.cpp` | Article du jour de Wikipédia ; décodage des images JPEG (pochette Sonos, image de l'article) et PNG (image de l'article, dont les SVG que Wikimedia rend en PNG) |
 | `src/agenda.cpp`, `src/ical.cpp` | Agendas : lecture des calendriers au fil de l'eau, récurrences comprises |
 | `src/brightness.cpp` | Luminosité, cycle, extinction et veille profonde |
 | `src/web.cpp` | Back office et mise à jour par Wi-Fi |
@@ -123,7 +123,8 @@ Le pilote d'écran, le dessin, le rendu du texte et les pictogrammes météo son
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5.5 | Espressif Systems | Apache-2.0 | Pilote LCD RGB `esp_lcd`, heure réseau, et les composants embarqués (FreeRTOS, lwIP, mbedTLS...) |
 | [Open Sans](https://github.com/googlefonts/opensans) 3.003 | The Open Sans Project Authors, © 2020 | SIL Open Font License 1.1 ([texte](include/fonts/OFL.txt)) | Glyphes pré-rendus dans `include/fonts/` |
 | [Logo du Liège Hackerspace](https://github.com/LgHS/branding) | LgHS | GPL-3.0 | Pictogramme de la page agenda (`include/fonts/font_lghs56.h`) |
-| [TJpgDec](http://elm-chan.org/fsw/tjpgd/) | ChaN | Licence libre de l'auteur (type BSD) | Décodeur JPEG de la ROM de l'ESP32-S3, pour les pochettes |
+| [TJpgDec](http://elm-chan.org/fsw/tjpgd/) | ChaN | Licence libre de l'auteur (type BSD) | Décodeur JPEG de la ROM de l'ESP32-S3, pour les pochettes et l'image de Wikipédia |
+| [miniz](https://github.com/richgel999/miniz) | Rich Geldreich | MIT | Décompression zlib de la ROM de l'ESP32-S3, pour les images PNG de Wikipédia |
 
 </details>
 

@@ -4,6 +4,7 @@
 #include <freertos/idf_additions.h>
 #include "jpeg.h"
 #include "net.h"
+#include "png.h"
 #include "text.h"
 
 #define HOST             "fr.wikipedia.org"
@@ -13,8 +14,13 @@
 #define CHECK_MS         (60UL * 60 * 1000)    // la rubrique a-t-elle changé ? Elle change une fois par jour.
 #define RETRY_MS         (10UL * 60 * 1000)    // après un échec
 #define MAX_AGE_MS       (36UL * 60 * 60 * 1000)
-#define RESP_SIZE        (128 * 1024)          // la plus grosse réponse est l'image, de 5 à 60 Ko
+#define RESP_SIZE        (384 * 1024)          // la plus grosse réponse est l'image : 5 à 60 Ko en JPEG, jusqu'à 300 Ko en PNG
 // Le texte de la rubrique du jour, mis à jour chaque jour par un robot de Wikipédia
+// Une image transparente (logo, carte, schéma tirés d'un SVG) est faite pour le blanc des pages de
+// Wikipédia : sur le noir de l'écran, elle est posée sur une carte claire, comme dans le thème sombre
+// de Wikipédia
+#define CARD_COLOR       0xFFFF
+#define CARD_PAD         12
 #define RUBRIC_PATH      "/w/index.php?title=Wikip%C3%A9dia:Accueil_principal/Lumi%C3%A8re_sur_(copie_sans_mod%C3%A8les)&action=raw"
 
 static WikiArticle current;
@@ -99,6 +105,25 @@ static bool isFile(const char *link) {
   return strncasecmp(link, "Fichier:", 8) == 0 || strncasecmp(link, "File:", 5) == 0 || strncasecmp(link, "Image:", 6) == 0;
 }
 
+// Décode l'image en JPEG ou en PNG, dans le carré de WIKI_IMAGE_MAX de côté
+static bool decode(const uint8_t *data, size_t len, uint16_t *out, uint16_t &w, uint16_t &h) {
+  if (len > 2 && data[0] == 0xFF && data[1] == 0xD8) return jpegDecode(data, len, out, WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, w, h);
+  if (!pngHasAlpha(data, len)) return pngDecode(data, len, out, WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, w, h, CARD_COLOR);
+  // Transparente : décodée sur le fond de la carte, puis entourée de sa marge. Les lignes sont
+  // décalées en partant de la fin, pour ne rien écraser qui reste à déplacer.
+  uint16_t iw, ih, inner = WIKI_IMAGE_MAX - 2 * CARD_PAD;
+  if (!pngDecode(data, len, out, inner, inner, iw, ih, CARD_COLOR)) return false;
+  w = iw + 2 * CARD_PAD, h = ih + 2 * CARD_PAD;
+  for (int32_t y = ih - 1; y >= 0; y--) memmove(out + (y + CARD_PAD) * w + CARD_PAD, out + y * iw, iw * sizeof(uint16_t));
+  for (uint16_t y = 0; y < h; y++) {
+    bool edge = y < CARD_PAD || y >= h - CARD_PAD;
+    for (uint16_t x = 0; x < w; x++) {
+      if (edge || x < CARD_PAD || x >= w - CARD_PAD) out[y * w + x] = CARD_COLOR;
+    }
+  }
+  return true;
+}
+
 // Lit la rubrique du jour, puis son article et son image. Faux si un serveur ne répond pas.
 static bool fetch() {
   // La rubrique, en wikicode : [[Fichier:Image.jpg|right|150px|...]] puis L'''[[Article]]''' est...
@@ -126,7 +151,7 @@ static bool fetch() {
   urlEncode(title, encoded, sizeof(encoded));
   int n = snprintf(path, sizeof(path),
                    "/w/api.php?action=query&format=json&formatversion=2&redirects=1&prop=extracts%%7Cimageinfo&exintro=1"
-                   "&explaintext=1&exchars=700&iiprop=url%%7Cmime&iiurlwidth=%u&iiurlheight=%u&titles=%s",
+                   "&explaintext=1&exchars=700&iiprop=url&iiurlwidth=%u&iiurlheight=%u&titles=%s",
                    WIKI_IMAGE_MAX, WIKI_IMAGE_MAX, encoded);
   if (file[0]) {
     urlEncode(file, encoded, sizeof(encoded));
@@ -140,8 +165,8 @@ static bool fetch() {
   const char *extract = strstr(json, "\"extract\":\"");
   if (extract) jsonString(extract + 11, a.text, sizeof(a.text));
   char thumb[512] = "";
-  const char *url = strstr(json, "\"thumburl\":\""), *mime = strstr(json, "\"mime\":\"image/jpeg\"");
-  if (url && mime) jsonString(url + 12, thumb, sizeof(thumb));
+  const char *url = strstr(json, "\"thumburl\":\"");
+  if (url) jsonString(url + 12, thumb, sizeof(thumb));
   for (char *t : {a.title, a.text}) {
     toLatin1(t);
     dropUnsupported(t);
@@ -153,18 +178,15 @@ static bool fetch() {
     *w = 0;
   }
 
-  // La vignette : https://thumb.wikimedia.org/wikipedia/commons/thumb/... Le décodeur ne lit que
-  // les JPEG ; sans image, la page s'en passe.
+  // La vignette : https://thumb.wikimedia.org/wikipedia/commons/thumb/... En JPEG pour une photo,
+  // en PNG pour un SVG ou un PNG ; une image GIF ou illisible, la page s'en passe.
   if (strncmp(thumb, "https://", 8) == 0 && images[next_image]) {
     char host[64];
     const char *slash = strchr(thumb + 8, '/');
     if (slash && slash - thumb - 8 < (int)sizeof(host)) {
       strlcpy(host, thumb + 8, slash - thumb - 8 + 1);
       const char *body = get(host, slash);
-      if (body && jpegDecode((const uint8_t *)body, resp_len, images[next_image], WIKI_IMAGE_MAX, WIKI_IMAGE_MAX,
-                             a.image_w, a.image_h)) {
-        a.image = images[next_image];
-      }
+      if (body && decode((const uint8_t *)body, resp_len, images[next_image], a.image_w, a.image_h)) a.image = images[next_image];
     }
   }
 

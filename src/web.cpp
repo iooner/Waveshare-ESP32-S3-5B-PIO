@@ -722,6 +722,27 @@ static void receiveFirmware(WiFiClient &c, uint8_t *data, size_t got, size_t tot
   ESP.restart();
 }
 
+// Capture de l'écran, telle qu'il est affiché : BMP 16 bits RGB565 de haut en bas, envoyé par
+// paquets de lignes copiés dans le tampon des requêtes
+static void sendScreen(WiFiClient &c) {
+  const uint32_t row = LCD_WIDTH * 2, size = 66 + row * LCD_HEIGHT;
+  uint8_t head[66] = {'B', 'M'};
+  auto le32 = [&](uint8_t at, uint32_t v) { memcpy(head + at, &v, 4); };
+  le32(2, size), le32(10, 66);                               // taille, début des pixels
+  le32(14, 40), le32(18, LCD_WIDTH), le32(22, -LCD_HEIGHT);  // en-tête : hauteur négative, de haut en bas
+  head[26] = 1, head[28] = 16, le32(30, 3), le32(34, row * LCD_HEIGHT);  // 1 plan, 16 bits, BI_BITFIELDS
+  le32(54, 0xF800), le32(58, 0x07E0), le32(62, 0x001F);     // masques rouge, vert, bleu
+  c.printf("HTTP/1.1 200 OK\r\nContent-Type: image/bmp\r\nContent-Length: %lu\r\nCache-Control: no-store\r\n"
+           "Connection: close\r\n\r\n", (unsigned long)size);
+  c.write(head, sizeof(head));
+  const uint16_t rows = BUF_SIZE / row;
+  for (uint16_t y = 0; y < LCD_HEIGHT && c.connected(); y += rows) {
+    uint16_t n = min<uint16_t>(rows, LCD_HEIGHT - y);
+    memcpy(req, lcd_fb + y * LCD_WIDTH, n * row);
+    c.write((const uint8_t *)req, n * row);
+  }
+}
+
 static void handle(WiFiClient &c) {
   // La requête jusqu'à la fin de ses en-têtes : sa première ligne, « GET /chemin?paramètres
   // HTTP/1.1 », dit quoi faire
@@ -751,6 +772,8 @@ static void handle(WiFiClient &c) {
     c.print("HTTP/1.1 204 No Content\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
   } else if (end && strcmp(req, "GET /") == 0) {
     sendPage(c);
+  } else if (end && strcmp(req, "GET /ecran.bmp") == 0) {
+    sendScreen(c);
   } else if (end && body && strcmp(req, "POST /update") == 0) {
     const char *length = strcasestr(end + 1, "content-length:");
     body += 4;
